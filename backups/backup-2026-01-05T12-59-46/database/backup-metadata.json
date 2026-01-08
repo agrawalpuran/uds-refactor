@@ -1,0 +1,196 @@
+{
+  "database": "uniform-distribution",
+  "timestamp": "2026-01-05T12:59:51.854Z",
+  "collections": [
+    {
+      "name": "companyshippingproviders",
+      "count": 1,
+      "indexes": 11
+    },
+    {
+      "name": "vendorcompanies",
+      "count": 0,
+      "indexes": 2
+    },
+    {
+      "name": "categories",
+      "count": 7,
+      "indexes": 5
+    },
+    {
+      "name": "manualcourierproviders",
+      "count": 6,
+      "indexes": 4
+    },
+    {
+      "name": "companyadmins",
+      "count": 5,
+      "indexes": 4
+    },
+    {
+      "name": "systemshippingconfigs",
+      "count": 1,
+      "indexes": 3
+    },
+    {
+      "name": "shipmentapilogs",
+      "count": 25,
+      "indexes": 12
+    },
+    {
+      "name": "shipmentpackages",
+      "count": 3,
+      "indexes": 3
+    },
+    {
+      "name": "returnrequests",
+      "count": 5,
+      "indexes": 12
+    },
+    {
+      "name": "productcompanies",
+      "count": 11,
+      "indexes": 2
+    },
+    {
+      "name": "invoices",
+      "count": 4,
+      "indexes": 13
+    },
+    {
+      "name": "purchaseorders",
+      "count": 32,
+      "indexes": 11
+    },
+    {
+      "name": "subcategories",
+      "count": 13,
+      "indexes": 8
+    },
+    {
+      "name": "designationsubcategoryeligibilities",
+      "count": 37,
+      "indexes": 8
+    },
+    {
+      "name": "logisticsprovidertestlogs",
+      "count": 121,
+      "indexes": 6
+    },
+    {
+      "name": "productvendors",
+      "count": 12,
+      "indexes": 2
+    },
+    {
+      "name": "whatsappsessions",
+      "count": 2,
+      "indexes": 1
+    },
+    {
+      "name": "productcategories",
+      "count": 5,
+      "indexes": 6
+    },
+    {
+      "name": "shipmentserviceproviders",
+      "count": 4,
+      "indexes": 7
+    },
+    {
+      "name": "vendorshippingroutings",
+      "count": 3,
+      "indexes": 11
+    },
+    {
+      "name": "employees",
+      "count": 40,
+      "indexes": 8
+    },
+    {
+      "name": "productfeedbacks",
+      "count": 3,
+      "indexes": 15
+    },
+    {
+      "name": "vendorwarehouses",
+      "count": 3,
+      "indexes": 11
+    },
+    {
+      "name": "grns",
+      "count": 10,
+      "indexes": 17
+    },
+    {
+      "name": "shipments",
+      "count": 9,
+      "indexes": 21
+    },
+    {
+      "name": "locations",
+      "count": 7,
+      "indexes": 6
+    },
+    {
+      "name": "locationadmins",
+      "count": 6,
+      "indexes": 4
+    },
+    {
+      "name": "orders",
+      "count": 32,
+      "indexes": 28
+    },
+    {
+      "name": "vendorinventories",
+      "count": 13,
+      "indexes": 3
+    },
+    {
+      "name": "productsizecharts",
+      "count": 0,
+      "indexes": 3
+    },
+    {
+      "name": "poorders",
+      "count": 36,
+      "indexes": 5
+    },
+    {
+      "name": "companies",
+      "count": 4,
+      "indexes": 4
+    },
+    {
+      "name": "addresses",
+      "count": 0,
+      "indexes": 4
+    },
+    {
+      "name": "branches",
+      "count": 0,
+      "indexes": 5
+    },
+    {
+      "name": "vendors",
+      "count": 3,
+      "indexes": 3
+    },
+    {
+      "name": "designationproducteligibilities",
+      "count": 0,
+      "indexes": 5
+    },
+    {
+      "name": "uniforms",
+      "count": 20,
+      "indexes": 7
+    },
+    {
+      "name": "productsubcategorymappings",
+      "count": 13,
+      "indexes": 7
+    }
+  ]
+}

@@ -1,0 +1,113 @@
+import { NextResponse } from 'next/server'
+import connectDB from '@/lib/db/mongodb'
+import {
+  getAllShipmentPackages,
+  createShipmentPackage,
+} from '@/lib/db/shipment-package-access'
+
+/**
+ * GET /api/shipping/packages
+ * Get all shipment packages (optionally filtered by active status)
+ */
+export async function GET(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const activeOnly = searchParams.get('activeOnly') === 'true'
+
+    await connectDB()
+
+    const packages = await getAllShipmentPackages(activeOnly)
+
+    return NextResponse.json({
+      success: true,
+      packages,
+    }, { status: 200 })
+  } catch (error: any) {
+    console.error('[packages API] GET Error:', error)
+    return NextResponse.json(
+      {
+        error: error.message || 'Unknown error occurred',
+        type: 'api_error',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
+      { status: 500 }
+    )
+  }
+}
+
+/**
+ * POST /api/shipping/packages
+ * Create a new shipment package
+ */
+export async function POST(request: Request) {
+  try {
+    const body = await request.json()
+    const { packageName, lengthCm, breadthCm, heightCm, volumetricDivisor, isActive } = body
+
+    // Validation
+    if (!packageName || !packageName.trim()) {
+      return NextResponse.json(
+        { error: 'packageName is required' },
+        { status: 400 }
+      )
+    }
+
+    if (!lengthCm || lengthCm <= 0) {
+      return NextResponse.json(
+        { error: 'lengthCm must be a positive number' },
+        { status: 400 }
+      )
+    }
+
+    if (!breadthCm || breadthCm <= 0) {
+      return NextResponse.json(
+        { error: 'breadthCm must be a positive number' },
+        { status: 400 }
+      )
+    }
+
+    if (!heightCm || heightCm <= 0) {
+      return NextResponse.json(
+        { error: 'heightCm must be a positive number' },
+        { status: 400 }
+      )
+    }
+
+    if (volumetricDivisor !== undefined && volumetricDivisor <= 0) {
+      return NextResponse.json(
+        { error: 'volumetricDivisor must be a positive number' },
+        { status: 400 }
+      )
+    }
+
+    await connectDB()
+
+    const package_ = await createShipmentPackage(
+      {
+        packageName,
+        lengthCm,
+        breadthCm,
+        heightCm,
+        volumetricDivisor,
+        isActive,
+      },
+      'superadmin' // TODO: Get from auth context
+    )
+
+    return NextResponse.json({
+      success: true,
+      package: package_,
+    }, { status: 201 })
+  } catch (error: any) {
+    console.error('[packages API] POST Error:', error)
+    return NextResponse.json(
+      {
+        error: error.message || 'Unknown error occurred',
+        type: 'api_error',
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
+      { status: 500 }
+    )
+  }
+}
+
