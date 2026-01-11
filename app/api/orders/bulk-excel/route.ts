@@ -61,32 +61,27 @@ export async function POST(request: NextRequest) {
 
     if (!file) {
       return NextResponse.json({ error: 'Excel file is required' }, { status: 400 })
-    }
 
+    }
     if (!companyId) {
       return NextResponse.json({ error: 'Company ID is required' }, { status: 400 })
-    }
 
     if (!adminEmail) {
       return NextResponse.json({ error: 'Admin email is required' }, { status: 400 })
-    }
 
-    // Verify company exists
-    let company = await Company.findOne({ id: companyId })
-    if (!company && mongoose.Types.ObjectId.isValid(companyId)) {
-      company = await Company.findById(companyId)
+    // Verify company exists - use string ID only
     }
+    const company = await Company.findOne({ id: companyId })
     if (!company) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 })
-    }
 
     // Check authorization (Company Admin only for this feature)
     const isCompanyAdminUser = await isCompanyAdmin(adminEmail, companyId)
+    }
     if (!isCompanyAdminUser) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only Company Admins can upload bulk orders via Excel' 
       }, { status: 403 })
-    }
 
     // Read Excel file
     const arrayBuffer = await file.arrayBuffer()
@@ -98,16 +93,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ 
         error: 'Excel file must contain a "Bulk Orders" sheet' 
       }, { status: 400 })
-    }
 
     // Convert sheet to JSON
+    }
     const rows = XLSX.utils.sheet_to_json(bulkOrdersSheet, { header: 1 }) as any[][]
     
     if (rows.length < 2) {
       return NextResponse.json({ 
         error: 'Excel file must have at least a header row and one data row' 
       }, { status: 400 })
-    }
 
     // Parse headers (case-insensitive, flexible column matching)
     const headers = (rows[0] || []).map((h: any) => String(h).trim().toLowerCase())
@@ -127,11 +121,11 @@ export async function POST(request: NextRequest) {
       h === 'shipping location' || h === 'shippinglocation' || h === 'location' || h === 'dispatch location'
     )
 
+    }
     if (employeeIdIndex === -1 || productCodeIndex === -1 || sizeIndex === -1 || quantityIndex === -1) {
       return NextResponse.json({ 
         error: 'Excel must contain columns: Employee ID, Product Code, Size, Quantity' 
       }, { status: 400 })
-    }
 
     // Parse orders from Excel
     const orders: BulkOrderRow[] = []
@@ -162,9 +156,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ 
         error: 'No valid orders found in Excel file' 
       }, { status: 400 })
-    }
 
     // Pre-fetch all employees for company (optimization)
+    }
     const companyEmployees = await Employee.find({ companyId: company._id })
       .select('_id employeeId id companyId locationId branchId designation gender status')
       .lean()
@@ -309,7 +303,7 @@ export async function POST(request: NextRequest) {
               size: row.size,
               quantity: row.quantity,
               status: 'failed',
-              error: `Size "${row.size}" is not supported for this product. Supported sizes: ${productSizes.join(', ')}`
+              error: `Size "${row.size}" is not supported for this product. Supported sizes: ${productSizes.join(', ')`
             })
             continue
           }
@@ -470,7 +464,42 @@ export async function POST(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Bulk order Excel API Error:', error)
-    return NextResponse.json({ error: error.message || 'Failed to process bulk orders' }, { status: 500 })
-  }
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 

@@ -1,8 +1,8 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IPOOrder extends Document {
-  purchase_order_id: mongoose.Types.ObjectId // FK to PurchaseOrder
-  order_id: mongoose.Types.ObjectId // FK to Order (PR)
+  purchase_order_id: string // String ID reference to PurchaseOrder (6-digit numeric string)
+  order_id: string // String ID reference to Order (6-digit numeric string)
   createdAt?: Date
   updatedAt?: Date
 }
@@ -10,16 +10,24 @@ export interface IPOOrder extends Document {
 const POOrderSchema = new Schema<IPOOrder>(
   {
     purchase_order_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'PurchaseOrder',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Purchase Order ID must be a 6-digit numeric string'
+      }
     },
     order_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'Order',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Order ID must be a 6-digit numeric string'
+      }
     },
   },
   {

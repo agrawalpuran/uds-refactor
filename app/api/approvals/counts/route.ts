@@ -70,8 +70,30 @@ export async function GET(request: Request) {
     return NextResponse.json(counts, { status: 200 })
   } catch (error: any) {
     console.error('Error fetching approval counts:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    }
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || errorMessage.includes('Not found') || errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    }
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch approval counts' },
+      { error: errorMessage },
       { status: 500 }
     )
   }

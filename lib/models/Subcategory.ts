@@ -15,8 +15,8 @@ import mongoose, { Schema, Document } from 'mongoose'
 export interface ISubcategory extends Document {
   id: string // Unique 6-digit ID (e.g., "600001")
   name: string // Subcategory name (e.g., "Managers Full Shirt", "Managers Half Shirt")
-  parentCategoryId: mongoose.Types.ObjectId // Reference to Category (REQUIRED - parent-child relationship)
-  companyId: mongoose.Types.ObjectId // Reference to Company (REQUIRED - company-scoped)
+  parentCategoryId: string // String ID reference to Category (6-digit numeric string) - REQUIRED
+  companyId: string // String ID reference to Company (6-digit numeric string) - REQUIRED
   status: 'active' | 'inactive'
   createdAt?: Date
   updatedAt?: Date
@@ -42,16 +42,24 @@ const SubcategorySchema = new Schema<ISubcategory>(
       trim: true,
     },
     parentCategoryId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Category',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Parent Category ID must be a 6-digit numeric string (e.g., "500001")'
+      }
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     status: {
       type: String,
@@ -75,7 +83,7 @@ SubcategorySchema.index({ parentCategoryId: 1, companyId: 1, name: 1 }, { unique
 SubcategorySchema.pre('save', async function(next) {
   if (this.isModified('parentCategoryId') || this.isNew) {
     const Category = mongoose.model('Category')
-    const parentCategory = await Category.findById(this.parentCategoryId)
+    const parentCategory = await Category.findOne({ id: this.parentCategoryId })
     if (!parentCategory) {
       return next(new Error(`Parent category with ID ${this.parentCategoryId} not found`))
     }

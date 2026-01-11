@@ -31,30 +31,56 @@ export async function GET(request: Request) {
           { error: 'Provider not found' },
           { status: 404 }
         )
-      }
       return NextResponse.json(provider)
-    }
 
     if (providerId) {
       const provider = await getShipmentServiceProviderById(providerId)
-      if (!provider) {
+    }
+    if (!provider) {
         return NextResponse.json(
           { error: 'Provider not found' },
           { status: 404 }
         )
-      }
       return NextResponse.json(provider)
-    }
 
     const providers = await getAllShipmentServiceProviders(includeInactive)
     return NextResponse.json(providers)
   } catch (error: any) {
     console.error('API Error in /api/superadmin/shipping-providers GET:', error)
+    console.error('API Error in /api/superadmin/shipping-providers GET:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error'
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -66,7 +92,14 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const {
       providerCode,
       providerName,
@@ -90,14 +123,13 @@ export async function POST(request: Request) {
         { error: 'Missing required fields: providerCode, providerName, providerType' },
         { status: 400 }
       )
-    }
 
+    }
     if (!['API_AGGREGATOR', 'DIRECT_COURIER', 'FREIGHT'].includes(providerType)) {
       return NextResponse.json(
         { error: 'Invalid providerType. Must be one of: API_AGGREGATOR, DIRECT_COURIER, FREIGHT' },
         { status: 400 }
       )
-    }
 
     const provider = await createShipmentServiceProvider(
       {
@@ -122,12 +154,40 @@ export async function POST(request: Request) {
     return NextResponse.json(provider, { status: 201 })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/shipping-providers POST:', error)
+    console.error('API Error in /api/superadmin/shipping-providers POST:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -139,7 +199,14 @@ export async function POST(request: Request) {
  */
 export async function PUT(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { providerId, ...updates } = body
 
     if (!providerId) {
@@ -147,14 +214,13 @@ export async function PUT(request: Request) {
         { error: 'providerId is required' },
         { status: 400 }
       )
-    }
 
+    }
     if (updates.providerType && !['API_AGGREGATOR', 'DIRECT_COURIER', 'FREIGHT'].includes(updates.providerType)) {
       return NextResponse.json(
         { error: 'Invalid providerType. Must be one of: API_AGGREGATOR, DIRECT_COURIER, FREIGHT' },
         { status: 400 }
       )
-    }
 
     const provider = await updateShipmentServiceProvider(
       providerId,
@@ -165,12 +231,40 @@ export async function PUT(request: Request) {
     return NextResponse.json(provider)
   } catch (error: any) {
     console.error('API Error in /api/superadmin/shipping-providers PUT:', error)
+    console.error('API Error in /api/superadmin/shipping-providers PUT:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -190,19 +284,46 @@ export async function DELETE(request: Request) {
         { error: 'providerId is required' },
         { status: 400 }
       )
-    }
 
     await deleteShipmentServiceProvider(providerId)
 
     return NextResponse.json({ success: true, message: 'Provider deleted successfully' })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/shipping-providers DELETE:', error)
+    console.error('API Error in /api/superadmin/shipping-providers DELETE:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

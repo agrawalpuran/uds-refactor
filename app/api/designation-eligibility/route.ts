@@ -23,31 +23,70 @@ export async function GET(request: Request) {
       const eligibility = await getDesignationEligibilityById(eligibilityId)
       if (!eligibility) {
         return NextResponse.json(null, { status: 404 })
-      }
       return NextResponse.json(eligibility)
-    }
 
     if (companyId && designation) {
       const gender = searchParams.get('gender') as 'male' | 'female' | undefined
       const eligibility = await getDesignationEligibilityByDesignation(companyId, designation, gender)
       return NextResponse.json(eligibility)
-    }
 
     if (companyId) {
-      const eligibilities = await getDesignationEligibilitiesByCompany(companyId)
-      return NextResponse.json(eligibilities)
     }
+    const eligibilities = await getDesignationEligibilitiesByCompany(companyId)
+      return NextResponse.json(eligibilities)
 
     return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 })
   } catch (error: any) {
     console.error('API Error in /api/designation-eligibility:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     console.log('POST /api/designation-eligibility - Request body:', {
       companyId: body.companyId,
       designation: body.designation,
@@ -73,7 +112,7 @@ export async function POST(request: Request) {
       if (!allowedProductCategories) missingFields.push('allowedProductCategories')
       console.error('Missing required fields:', missingFields)
       return NextResponse.json(
-        { error: `Missing required fields: ${missingFields.join(', ')}` },
+        { error: `Missing required fields: ${missingFields.join(', ')` },
         { status: 400 }
       )
     }
@@ -95,13 +134,55 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error('API Error in /api/designation-eligibility POST:', error)
     console.error('Error stack:', error.stack)
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 })
-  }
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 
 export async function PUT(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     console.log('PUT /api/designation-eligibility - Request body:', {
       eligibilityId: body.eligibilityId,
       designation: body.designation,
@@ -124,8 +205,8 @@ export async function PUT(request: Request) {
     if (!eligibilityId) {
       console.error('Missing required field: eligibilityId')
       return NextResponse.json({ error: 'Missing required field: eligibilityId' }, { status: 400 })
-    }
 
+    }
     const eligibility = await updateDesignationEligibility(
       eligibilityId,
       designation,
@@ -145,8 +226,43 @@ export async function PUT(request: Request) {
   } catch (error: any) {
     console.error('API Error in /api/designation-eligibility PUT:', error)
     console.error('Error stack:', error.stack)
-    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 })
-  }
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 
 export async function DELETE(request: Request) {
@@ -156,13 +272,47 @@ export async function DELETE(request: Request) {
 
     if (!eligibilityId) {
       return NextResponse.json({ error: 'Missing required field: eligibilityId' }, { status: 400 })
-    }
 
     await deleteDesignationEligibility(eligibilityId)
     return NextResponse.json({ success: true })
   } catch (error: any) {
     console.error('API Error in /api/designation-eligibility DELETE:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 

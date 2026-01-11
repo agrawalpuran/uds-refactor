@@ -1,8 +1,8 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface ICompanyAdmin extends Document {
-  companyId: mongoose.Types.ObjectId
-  employeeId: mongoose.Types.ObjectId
+  companyId: string // String ID reference to Company (6-digit numeric string)
+  employeeId: string // String ID reference to Employee (6-digit numeric string)
   canApproveOrders: boolean
   createdAt?: Date
   updatedAt?: Date
@@ -11,16 +11,24 @@ export interface ICompanyAdmin extends Document {
 const CompanyAdminSchema = new Schema<ICompanyAdmin>(
   {
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     employeeId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Employee ID must be a 6-digit numeric string (e.g., "300001")'
+      }
     },
     canApproveOrders: {
       type: Boolean,

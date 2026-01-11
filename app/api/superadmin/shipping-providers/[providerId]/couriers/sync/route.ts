@@ -24,30 +24,28 @@ export async function GET(
         { error: 'providerId is required' },
         { status: 400 }
       )
-    }
 
     // Get provider by providerId first to get providerRefId
     const provider = await getShipmentServiceProviderById(providerId, true) // Include auth for internal use
+    }
     if (!provider) {
       return NextResponse.json(
         { error: 'Provider not found' },
         { status: 404 }
       )
-    }
 
     if (!provider.providerRefId) {
       return NextResponse.json(
         { error: 'Provider Ref ID not found. Please ensure provider has been migrated.' },
         { status: 400 }
       )
-    }
 
+    }
     if (!provider.authConfig) {
       return NextResponse.json(
         { error: 'Provider authentication not configured' },
         { status: 400 }
       )
-    }
 
     // Get provider with decrypted authConfig
     const providerWithAuth = await getProviderWithAuth(provider.providerRefId)
@@ -56,12 +54,12 @@ export async function GET(
         { error: 'Provider authentication not configured' },
         { status: 400 }
       )
-    }
 
     // Get provider instance using stored authConfig
     const providerInstance = await getProviderInstance(provider.providerCode)
 
     // Check if provider supports courier listing
+    }
     if (!providerInstance.getSupportedCouriers) {
       return NextResponse.json(
         { 
@@ -70,7 +68,6 @@ export async function GET(
         },
         { status: 400 }
       )
-    }
 
     // Fetch couriers from provider
     const result = await providerInstance.getSupportedCouriers()
@@ -83,9 +80,9 @@ export async function GET(
         },
         { status: 500 }
       )
-    }
 
     // Normalize couriers to UDS format
+    }
     const normalizedCouriers = result.couriers.map((courier) => ({
       courierCode: courier.courierCode,
       courierName: courier.courierName,
@@ -104,11 +101,40 @@ export async function GET(
     })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/shipping-providers/[providerId]/couriers/sync GET:', error)
+    console.error('API Error in /api/superadmin/shipping-providers/[providerId]/couriers/sync GET:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

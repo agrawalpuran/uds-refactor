@@ -12,7 +12,7 @@ import mongoose, { Schema, Document } from 'mongoose'
  * - This table provides reverse lookup: find all locations for which an employee is admin
  */
 export interface ILocationAdmin extends Document {
-  locationId: mongoose.Types.ObjectId // Reference to Location
+  locationId: string // String ID reference to Location (6-digit numeric string)
   employeeId: string // Employee ID (6-digit numeric string, e.g., "300001") - matches Employee.id format
   createdAt?: Date
   updatedAt?: Date
@@ -21,10 +21,14 @@ export interface ILocationAdmin extends Document {
 const LocationAdminSchema = new Schema<ILocationAdmin>(
   {
     locationId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Location',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Location ID must be a 6-digit numeric string (e.g., "400001")'
+      }
     },
     employeeId: {
       type: String,

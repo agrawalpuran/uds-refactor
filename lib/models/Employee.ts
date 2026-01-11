@@ -22,9 +22,9 @@ export interface IEmployee extends Document {
   state: string // State name (REQUIRED)
   pincode: string // Postal code (REQUIRED, 6 digits for India)
   country: string // Country name (DEFAULT: 'India')
-  companyId: mongoose.Types.ObjectId
+  companyId: string // String ID reference to Company (6-digit numeric string)
   companyName?: string // Optional - derived from companyId, stored for display only
-  locationId?: mongoose.Types.ObjectId // Reference to Location (official delivery location) - REQUIRED for new employees
+  locationId?: string // String ID reference to Location (6-digit numeric string) - REQUIRED for new employees
   eligibility: {
     shirt: number
     pant: number
@@ -173,9 +173,15 @@ const EmployeeSchema = new Schema<IEmployee>(
     // Note: companyId doesn't need index: true because it's the first field in compound indexes below
     // MongoDB can use compound indexes for queries on just companyId
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     companyName: {
       type: String,
@@ -184,8 +190,15 @@ const EmployeeSchema = new Schema<IEmployee>(
     // Note: locationId doesn't need index: true because it's the first field in compound indexes below
     // MongoDB can use compound indexes for queries on just locationId
     locationId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Location',
+      type: String,
+      required: false,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits if provided
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Location ID must be a 6-digit numeric string (e.g., "200001")'
+      }
       // Note: Optional for backward compatibility, but should be required for new employees
       // Validation will be enforced at service layer
     },

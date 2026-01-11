@@ -20,7 +20,14 @@ import { getProviderInstance } from '@/lib/providers/ProviderFactory'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { providerCode, fromPincode, pincode, weight, codAmount, courierCode } = body
 
     if (!providerCode) {
@@ -28,14 +35,13 @@ export async function POST(request: Request) {
         { error: 'providerCode is required' },
         { status: 400 }
       )
-    }
 
+    }
     if (!fromPincode || !pincode) {
       return NextResponse.json(
         { error: 'fromPincode and pincode are required' },
         { status: 400 }
       )
-    }
 
     // Validate pincode format
     const destinationPincode = String(pincode).trim()
@@ -46,24 +52,22 @@ export async function POST(request: Request) {
         { error: 'Destination pincode must be a valid 6-digit number' },
         { status: 400 }
       )
-    }
     if (!/^\d{6}$/.test(sourcePincode)) {
       return NextResponse.json(
         { error: 'Source pincode must be a valid 6-digit number' },
         { status: 400 }
       )
-    }
     
     if (sourcePincode === destinationPincode) {
       return NextResponse.json(
         { error: 'Source and destination pincodes must be different' },
         { status: 400 }
       )
-    }
 
     await connectDB()
 
     // Get provider by code
+    }
     const provider: any = await ShipmentServiceProvider.findOne({ 
       providerCode: providerCode.toUpperCase() 
     }).lean()
@@ -73,14 +77,13 @@ export async function POST(request: Request) {
         { error: `Provider not found: ${providerCode}` },
         { status: 404 }
       )
-    }
 
+    }
     if (!provider.isActive) {
       return NextResponse.json(
         { error: `Provider is not active: ${providerCode}` },
         { status: 400 }
       )
-    }
 
     // Get provider instance
     let providerInstance
@@ -90,14 +93,43 @@ export async function POST(request: Request) {
       console.log(`[serviceability] ✅ Provider instance created: ${providerInstance.providerCode}`)
     } catch (error: any) {
       console.error(`[serviceability] ❌ Failed to initialize provider:`, error)
+      console.error(`[serviceability] ❌ Failed to initialize provider:`, error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
       return NextResponse.json(
-        { 
-          error: `Failed to initialize provider: ${error.message}`,
-          providerCode: provider.providerCode,
-        },
-        { status: 500 }
+        { error: errorMessage },
+        { status: 400 }
       )
-    }
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
+  }
 
     // Check serviceability
     const shipmentWeight = weight || 1.0
@@ -126,12 +158,40 @@ export async function POST(request: Request) {
     }, { status: 200 })
   } catch (error: any) {
     console.error('[serviceability API] Error:', error)
+    console.error('[serviceability API] Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

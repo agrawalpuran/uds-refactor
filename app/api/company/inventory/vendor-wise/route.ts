@@ -34,8 +34,40 @@ export async function GET(request: Request) {
     return NextResponse.json(inventory)
   } catch (error: any) {
     console.error('API Error in /api/company/inventory/vendor-wise GET:', error)
+    console.error('API Error in /api/company/inventory/vendor-wise GET:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -43,14 +75,128 @@ export async function GET(request: Request) {
 
 // Explicitly disable POST, PUT, DELETE methods for read-only endpoint
 export async function POST() {
+  try {
+
   return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
-}
+  } catch (error: any) {
+    console.error(`[API] Error in POST handler:`, error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 
 export async function PUT() {
+  try {
+
   return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
-}
+  } catch (error: any) {
+    console.error(`[API] Error in PUT handler:`, error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 
 export async function DELETE() {
+  try {
+
   return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
-}
+  } catch (error: any) {
+    console.error(`[API] Error in DELETE handler:`, error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 

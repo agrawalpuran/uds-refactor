@@ -15,7 +15,6 @@ export async function POST(request: Request) {
         { error: 'Invalid JSON in request body' },
         { status: 400 }
       )
-    }
     
     const { orderId, productId, employeeId, companyId, vendorId, rating, comment } = body
     
@@ -25,15 +24,14 @@ export async function POST(request: Request) {
         { error: 'Missing required fields: orderId, productId, employeeId, companyId, rating' },
         { status: 400 }
       )
-    }
     
     // Validate rating
+    }
     if (typeof rating !== 'number' || rating < 1 || rating > 5 || !Number.isInteger(rating)) {
       return NextResponse.json(
         { error: 'Rating must be an integer between 1 and 5' },
         { status: 400 }
       )
-    }
     
     // Get user email from request body (sent by client)
     const userEmail = body.userEmail
@@ -42,9 +40,9 @@ export async function POST(request: Request) {
         { error: 'User email is required' },
         { status: 401 }
       )
-    }
     
     // Create feedback
+    }
     const feedback = await createProductFeedback({
       orderId,
       productId,
@@ -59,11 +57,39 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error('API Error in /api/feedback POST:', error)
     console.error('Error stack:', error.stack)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') || errorMessage.includes('authentication')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to create feedback' },
+      { error: errorMessage },
       { status: 500 }
     )
-  }
 }
 
 export async function GET(request: Request) {
@@ -78,7 +104,6 @@ export async function GET(request: Request) {
         { error: 'Invalid request URL' },
         { status: 400 }
       )
-    }
     
     const orderId = searchParams.get('orderId')
     const productId = searchParams.get('productId')
@@ -93,9 +118,9 @@ export async function GET(request: Request) {
         { error: 'User email is required' },
         { status: 401 }
       )
-    }
     
     // Get feedback with role-based access control
+    }
     const feedback = await getProductFeedback(userEmail, {
       orderId: orderId || undefined,
       productId: productId || undefined,
@@ -108,10 +133,30 @@ export async function GET(request: Request) {
   } catch (error: any) {
     console.error('API Error in /api/feedback GET:', error)
     console.error('Error stack:', error.stack)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch feedback' },
+      { error: errorMessage },
       { status: 500 }
     )
-  }
 }
 

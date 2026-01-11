@@ -22,12 +22,28 @@ export async function POST() {
     })
   } catch (error: any) {
     console.error('API Error in /api/shipments/sync POST:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || errorMessage.includes('Not found') || errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

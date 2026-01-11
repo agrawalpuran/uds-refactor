@@ -2,8 +2,8 @@ import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IPayment extends Document {
   id: string
-  invoice_id: mongoose.Types.ObjectId
-  vendor_id: mongoose.Types.ObjectId
+  invoice_id: string // String ID reference to VendorInvoice (6-digit numeric string)
+  vendor_id: string // String ID reference to Vendor (6-digit numeric string)
   payment_reference: string
   payment_date: Date
   amount_paid: number
@@ -20,16 +20,24 @@ const PaymentSchema = new Schema<IPayment>(
       unique: true,
     },
     invoice_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'VendorInvoice',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Invoice ID must be a 6-digit numeric string'
+      }
     },
     vendor_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'Vendor',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     payment_reference: {
       type: String,

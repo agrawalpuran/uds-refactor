@@ -21,7 +21,14 @@ export async function POST(request: Request) {
     // CRITICAL: Connect to database before any queries
     await connectDB()
     
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { prId, shipmentData, vendorId } = body
 
     // Validate required fields
@@ -30,24 +37,23 @@ export async function POST(request: Request) {
         { error: 'PR ID is required' },
         { status: 400 }
       )
-    }
 
+    }
     if (!vendorId) {
       return NextResponse.json(
         { error: 'Vendor ID is required' },
         { status: 400 }
       )
-    }
 
     if (!shipmentData) {
       return NextResponse.json(
         { error: 'Shipment data is required' },
         { status: 400 }
       )
-    }
 
     // Validate shipment data structure
     // Note: shipperName is optional in UI but we provide a default if not provided
+    }
     if (!shipmentData.shipperName || !shipmentData.shipperName.trim()) {
       shipmentData.shipperName = 'Vendor' // Default value when not provided from UI
     }
@@ -57,21 +63,19 @@ export async function POST(request: Request) {
         { error: 'dispatchedDate is required' },
         { status: 400 }
       )
-    }
 
+    }
     if (!shipmentData.modeOfTransport) {
       return NextResponse.json(
         { error: 'modeOfTransport is required' },
         { status: 400 }
       )
-    }
 
     if (!shipmentData.itemDispatchedQuantities || !Array.isArray(shipmentData.itemDispatchedQuantities)) {
       return NextResponse.json(
         { error: 'itemDispatchedQuantities array is required' },
         { status: 400 }
       )
-    }
 
     // Parse dispatched date
     const dispatchedDate = new Date(shipmentData.dispatchedDate)
@@ -109,11 +113,11 @@ export async function POST(request: Request) {
             details: `Order ${prId} exists but belongs to vendor ${orderWithoutVendor.vendorId}, not ${vendorId}`
           },
           { status: 403 }
-        )
-      } else {
+        ) else {
         console.error('[API /prs/shipment POST] Order does not exist with id:', prId)
         // Try to find similar orders for debugging
-        const similarOrders = await order.find({ id: { $regex: prId.substring(0, Math.min(10, prId.length)) } })
+    }
+    const similarOrders = await order.find({ id: { $regex: prId.substring(0, Math.min(10, prId.length)) } })
           .select('id vendorId')
           .limit(5)
           .lean()
@@ -128,31 +132,40 @@ export async function POST(request: Request) {
           },
           { status: 404 }
         )
-      }
     }
     
     console.log('[API /prs/shipment POST] ✅ Order found:', { id: orderDoc.id, companyId: orderDoc.companyId })
 
-    // Convert companyId from ObjectId/Buffer to Company string id
+    // Extract companyId - use string ID directly
     const Company = await import('@/lib/models/Company').then(m => m.default)
     let companyId: string | null = null
     if (orderDoc.companyId) {
-      // Handle Buffer (from .lean()) or ObjectId
-      if (Buffer.isBuffer(orderDoc.companyId) || orderDoc.companyId instanceof mongoose.default.Types.ObjectId) {
-        // Convert ObjectId/Buffer to string and look up Company
-        const companyObjectId = Buffer.isBuffer(orderDoc.companyId) 
-          ? new mongoose.default.Types.ObjectId(orderDoc.companyId)
-          : orderDoc.companyId
-        const company: any = await Company.findById(companyObjectId).select('id').lean()
-        if (company) {
-          companyId = company.id
-        }
-      } else if (typeof orderDoc.companyId === 'object' && orderDoc.companyId?.id) {
+      if (typeof orderDoc.companyId === 'object' && orderDoc.companyId?.id) {
         // Populated object with id field
-        companyId = orderDoc.companyId.id
+        companyId = String(orderDoc.companyId.id)
       } else if (typeof orderDoc.companyId === 'string') {
         // Already a string (should be 6-digit company ID)
         companyId = orderDoc.companyId
+      } else {
+        // If it's an ObjectId/Buffer, convert to string and look up Company by string id
+        // This handles legacy data where companyId might still be ObjectId
+        const companyObjectIdStr = Buffer.isBuffer(orderDoc.companyId) 
+          ? orderDoc.companyId.toString('hex')
+          : String(orderDoc.companyId)
+        
+        // Try to find company by string ID (if ObjectId was converted to string)
+        // First try direct lookup by id field
+        const company: any = await Company.findOne({ id: companyObjectIdStr }).select('id').lean()
+        if (company) {
+          companyId = company.id
+        } else if (mongoose.default.Types.ObjectId.isValid(companyObjectIdStr)) {
+          // Fallback: if it's a valid ObjectId string, look up by _id and get string id
+          const companyObjectId = new mongoose.default.Types.ObjectId(companyObjectIdStr)
+          const companyByObjectId: any = await Company.findById(companyObjectId).select('id').lean()
+          if (companyByObjectId) {
+            companyId = companyByObjectId.id
+          }
+        }
       }
     }
 
@@ -161,11 +174,11 @@ export async function POST(request: Request) {
         { error: 'Company ID not found for order' },
         { status: 400 }
       )
-    }
 
     // ====================================================
     // CHECKPOINT 1: Company Shipping Mode Resolution
     // ====================================================
+    }
     const company: any = await Company.findOne({ id: companyId }).select('shipmentRequestMode name').lean()
     
     const companyShipmentMode = company?.shipmentRequestMode || 'MANUAL'
@@ -385,7 +398,6 @@ export async function POST(request: Request) {
             },
             { status: 400 }
           )
-        }
         
         // If explicit shipmentMode === 'API' but no providers enabled, throw error
         if (explicitShipmentMode === 'API') {
@@ -399,7 +411,6 @@ export async function POST(request: Request) {
             },
             { status: 400 }
           )
-        }
         
         // Otherwise, log warning and fall back to manual (for backward compatibility)
         // This should only happen if companyShipmentMode is NOT AUTOMATIC and explicitShipmentMode is NOT API
@@ -541,10 +552,10 @@ export async function POST(request: Request) {
               },
               { status: 400 }
             )
-          }
           
           // If explicit API mode, throw error
-          if (explicitShipmentMode === 'API') {
+    }
+    if (explicitShipmentMode === 'API') {
             return NextResponse.json(
               { 
                 error: `Unable to resolve shipping provider. Please ensure provider is enabled for company and vendor routing is configured.`,
@@ -554,7 +565,6 @@ export async function POST(request: Request) {
               },
               { status: 400 }
             )
-          }
           
           // Otherwise, log warning and fall back to manual
           // CRITICAL: This should NOT happen if companyShipmentMode is AUTOMATIC
@@ -655,7 +665,6 @@ export async function POST(request: Request) {
                 { error: `API shipment failed: ${apiResult.error}` },
                 { status: 500 }
               )
-            }
           } else {
             // API shipment successful - update PR with shipment data
             console.log('[API /prs/shipment POST] ✅ API shipment successful, updating PR...')
@@ -691,7 +700,6 @@ export async function POST(request: Request) {
               companyName: company?.name,
             })
             return NextResponse.json(apiResponse, { status: 200 })
-          }
         }
       }
     }
@@ -756,12 +764,40 @@ export async function POST(request: Request) {
     return NextResponse.json(manualResponse, { status: 200 })
   } catch (error: any) {
     console.error('API Error in /api/prs/shipment POST:', error)
+    console.error('API Error in /api/prs/shipment POST:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -773,7 +809,14 @@ export async function POST(request: Request) {
  */
 export async function PUT(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { prId, deliveryData, vendorId } = body
 
     // Validate required fields
@@ -782,35 +825,32 @@ export async function PUT(request: Request) {
         { error: 'PR ID is required' },
         { status: 400 }
       )
-    }
 
+    }
     if (!vendorId) {
       return NextResponse.json(
         { error: 'Vendor ID is required' },
         { status: 400 }
       )
-    }
 
     if (!deliveryData) {
       return NextResponse.json(
         { error: 'Delivery data is required' },
         { status: 400 }
       )
-    }
 
+    }
     if (!deliveryData.deliveredDate) {
       return NextResponse.json(
         { error: 'deliveredDate is required' },
         { status: 400 }
       )
-    }
 
     if (!deliveryData.itemDeliveredQuantities || !Array.isArray(deliveryData.itemDeliveredQuantities)) {
       return NextResponse.json(
         { error: 'itemDeliveredQuantities array is required' },
         { status: 400 }
       )
-    }
 
     // Parse delivered date
     const deliveredDate = new Date(deliveryData.deliveredDate)
@@ -833,12 +873,40 @@ export async function PUT(request: Request) {
     return NextResponse.json(updatedPR, { status: 200 })
   } catch (error: any) {
     console.error('API Error in /api/prs/shipment PUT:', error)
+    console.error('API Error in /api/prs/shipment PUT:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

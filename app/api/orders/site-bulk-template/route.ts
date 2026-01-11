@@ -37,45 +37,31 @@ export async function GET(request: NextRequest) {
         { error: 'Admin email is required' },
         { status: 400 }
       )
-    }
 
     // Verify Site Admin access
     const location = await getLocationByAdminEmail(adminEmail.trim().toLowerCase())
+    }
     if (!location) {
       return NextResponse.json(
         { error: 'Unauthorized: Only Site Admins can download bulk order templates' },
         { status: 403 }
       )
-    }
 
-    // CRITICAL: getLocationByAdminEmail returns a plain object with 'id' (string), not '_id'
-    // We need to fetch the Location again by its string id to get the ObjectId _id
+    // Use location string ID directly
     const locationIdStr = location.id
     if (!locationIdStr) {
       return NextResponse.json(
         { error: 'Location ID not found' },
         { status: 400 }
       )
-    }
-
-    // Fetch location by string id to get the ObjectId _id for querying employees
-    const locationDoc: any = await Location.findOne({ id: locationIdStr }).lean()
-    if (!locationDoc || !locationDoc._id) {
-      return NextResponse.json(
-        { error: 'Location not found in database' },
-        { status: 404 }
-      )
-    }
-
-    const locationId = locationDoc._id // This is the ObjectId needed for Employee queries
 
     // ============================================================
     // SHEET 1: EMPLOYEE REFERENCE (READ-ONLY) - SITE SCOPED
     // ============================================================
-    // Get ONLY employees belonging to this location
-    // locationId field in Employee model expects ObjectId, not string
+    // Get ONLY employees belonging to this location - use string ID
+    }
     const employees = await Employee.find({ 
-      locationId: locationId,
+      locationId: locationIdStr,
       status: 'active' 
     })
       .select('employeeId id firstName lastName designation location')
@@ -91,7 +77,7 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      let locationName = locationDoc.name || location.name || 'N/A'
+      let locationName = location.name || 'N/A'
       if (emp.location && typeof emp.location === 'string' && emp.location.includes(':')) {
         try {
           locationName = decrypt(emp.location)
@@ -114,7 +100,7 @@ export async function GET(request: NextRequest) {
     // ============================================================
     // Get all unique designations for employees in this location
     const locationEmployees = await Employee.find({ 
-      locationId: locationId,
+      locationId: locationIdStr,
       status: 'active' 
     })
       .select('designation gender companyId')
@@ -125,18 +111,17 @@ export async function GET(request: NextRequest) {
         { error: 'No active employees found in your location. Please add employees first.' },
         { status: 400 }
       )
-    }
 
     const designationSet = new Set<string>()
     const genderSet = new Set<'male' | 'female' | 'unisex'>()
     const companyId = locationEmployees[0]?.companyId
 
+    }
     if (!companyId) {
       return NextResponse.json(
         { error: 'Location employees must belong to a company' },
         { status: 400 }
       )
-    }
 
     locationEmployees.forEach((emp: any) => {
       let designation = emp.designation
@@ -176,51 +161,52 @@ export async function GET(request: NextRequest) {
 
     const eligibleSubcategoryIds = new Set<string>()
     allEligibilities.forEach((elig: any) => {
-      const subcatId = elig.subCategoryId?._id?.toString() || elig.subCategoryId?.toString()
+      // Use string ID from subcategory
+      const subcatId = elig.subCategoryId?.id || String(elig.subCategoryId)
       if (subcatId) {
         eligibleSubcategoryIds.add(subcatId)
       }
     })
 
-    // Get all product-subcategory mappings for eligible subcategories
+    // Get all product-subcategory mappings for eligible subcategories - use string IDs
     const productMappings = await ProductSubcategoryMapping.find({
-      subCategoryId: { $in: Array.from(eligibleSubcategoryIds).map(id => new mongoose.Types.ObjectId(id)) },
-      companyId: companyId
+      subCategoryId: { $in: Array.from(eligibleSubcategoryIds) },
+      companyId: String(companyId)
     })
       .populate('subCategoryId', 'id name parentCategoryId')
       .lean()
 
-    // Get all product IDs from mappings
+    // Get all product string IDs from mappings
     const productIds = new Set<string>()
     productMappings.forEach((mapping: any) => {
-      const productId = mapping.productId?.toString() || mapping.productId
+      const productId = mapping.productId?.id || String(mapping.productId)
       if (productId) {
         productIds.add(productId)
       }
     })
 
-    // Fetch all products with their details
+    // Fetch all products with their details - use string IDs
     const products = await Uniform.find({
-      _id: { $in: Array.from(productIds).map(id => new mongoose.Types.ObjectId(id)) }
+      id: { $in: Array.from(productIds) }
     })
       .lean()
 
     // Build product details map
     for (const product of products) {
-      const productId = (product as any)._id?.toString() || (product as any).id
+      const productId = (product as any).id
       const subcategoryMapping = productMappings.find((m: any) => 
-        (m.productId?.toString() || m.productId) === productId
+        (m.productId?.id || String(m.productId)) === productId
       )
       
       if (subcategoryMapping) {
         const subcategoryName = subcategoryMapping.subCategoryId?.name || 'N/A'
         
-        // Get vendor name
-        const productVendor: any = await ProductVendor.findOne({ productId: (product as any)._id }).populate('vendorId', 'name').lean()
+        // Get vendor name - use string product ID
+        const productVendor: any = await ProductVendor.findOne({ productId: productId }).populate('vendorId', 'name').lean()
         const vendorName = productVendor?.vendorId?.name || 'N/A'
 
         productDetailsMap.set(productId, {
-          id: (product as any).id || (product as any)._id?.toString() || productId,
+          id: productId,
           name: product.name || 'Unknown Product',
           subcategory: subcategoryName,
           vendor: vendorName,
@@ -277,8 +263,40 @@ export async function GET(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Error generating site bulk order template:', error)
+    console.error('Error generating site bulk order template:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to generate template' },
+      { error: errorMessage },
       { status: 500 }
     )
   }

@@ -122,16 +122,93 @@ export default function ConsumerLogin() {
       }
 
       console.log(`[ConsumerLogin] ✅ Employee found: ${employee.id || employee.employeeId}`)
+      console.log(`[ConsumerLogin] Employee object:`, {
+        id: employee.id,
+        employeeId: employee.employeeId,
+        companyId: employee.companyId,
+        companyIdType: typeof employee.companyId,
+        companyIdKeys: employee.companyId && typeof employee.companyId === 'object' ? Object.keys(employee.companyId) : 'N/A'
+      })
 
-      // Step 2: Get company ID
+      // Step 2: Get company ID with enhanced extraction logic
       let companyId: string | null = null
-      if (typeof employee.companyId === 'object' && employee.companyId?.id) {
-        companyId = employee.companyId.id
-      } else if (typeof employee.companyId === 'string') {
-        companyId = employee.companyId
+      
+      // Try multiple ways to extract companyId
+      if (employee.companyId) {
+        if (typeof employee.companyId === 'object') {
+          // Handle populated company object
+          if (employee.companyId.id) {
+            companyId = String(employee.companyId.id)
+          } else if (employee.companyId._id) {
+            // If it's an ObjectId, try to look it up via API
+            const objectIdStr = employee.companyId._id.toString()
+            console.log(`[ConsumerLogin] Attempting to resolve ObjectId companyId via API: ${objectIdStr}`)
+            try {
+              const response = await fetch(`/api/companies?companyId=${encodeURIComponent(objectIdStr)}`)
+              if (response.ok) {
+                const companyData = await response.json()
+                if (companyData && companyData.id) {
+                  companyId = String(companyData.id)
+                  console.log(`[ConsumerLogin] ✅ Resolved companyId from ObjectId via API: ${companyId}`)
+                }
+              }
+            } catch (apiError) {
+              console.error(`[ConsumerLogin] Failed to resolve ObjectId companyId via API:`, apiError)
+            }
+          }
+        } else if (typeof employee.companyId === 'string') {
+          companyId = employee.companyId
+        } else if (employee.companyId.toString) {
+          // Handle ObjectId or other objects with toString
+          const companyIdStr = employee.companyId.toString()
+          // Check if it's a numeric ID (6 digits)
+          if (/^\d{6}$/.test(companyIdStr)) {
+            companyId = companyIdStr
+          } else {
+            // It might be an ObjectId, try to look it up via API
+            console.log(`[ConsumerLogin] CompanyId appears to be ObjectId: ${companyIdStr}, attempting lookup...`)
+            try {
+              const response = await fetch(`/api/companies?companyId=${encodeURIComponent(companyIdStr)}`)
+              if (response.ok) {
+                const companyData = await response.json()
+                if (companyData && companyData.id) {
+                  companyId = String(companyData.id)
+                  console.log(`[ConsumerLogin] ✅ Resolved companyId from API: ${companyId}`)
+                }
+              }
+            } catch (apiError) {
+              console.error(`[ConsumerLogin] Failed to resolve companyId via API:`, apiError)
+            }
+          }
+        }
+      }
+
+      // Final fallback: Try to get companyId from employee's raw data via API
+      if (!companyId && employee.id) {
+        console.log(`[ConsumerLogin] ⚠️ CompanyId not found, attempting fallback lookup for employee ${employee.id}`)
+        try {
+          const { getEmployeeById } = await import('@/lib/data-mongodb')
+          const fullEmployee = await getEmployeeById(employee.id)
+          if (fullEmployee && fullEmployee.companyId) {
+            if (typeof fullEmployee.companyId === 'string') {
+              companyId = fullEmployee.companyId
+            } else if (typeof fullEmployee.companyId === 'object' && fullEmployee.companyId.id) {
+              companyId = String(fullEmployee.companyId.id)
+            }
+            console.log(`[ConsumerLogin] ✅ Recovered companyId from fallback: ${companyId}`)
+          }
+        } catch (fallbackError) {
+          console.error(`[ConsumerLogin] Fallback lookup failed:`, fallbackError)
+        }
       }
 
       if (!companyId) {
+        console.error(`[ConsumerLogin] ❌ CRITICAL: CompanyId extraction failed for employee:`, {
+          employeeId: employee.id || employee.employeeId,
+          email: normalizedEmail,
+          companyIdValue: employee.companyId,
+          companyIdType: typeof employee.companyId
+        })
         setError('Company information not found. Please contact your administrator.')
         setShowOTP(false)
         setLoading(false)
@@ -153,14 +230,23 @@ export default function ConsumerLogin() {
 
       // Step 4: If not an admin, check if employee orders are enabled
       if (!isAnyAdmin) {
+        console.log(`[ConsumerLogin] Looking up company with ID: ${companyId}`)
         const company = await getCompanyById(companyId)
         
         if (!company) {
+          console.error(`[ConsumerLogin] ❌ Company lookup failed for companyId: ${companyId}`)
+          console.error(`[ConsumerLogin] Employee details:`, {
+            id: employee.id || employee.employeeId,
+            email: normalizedEmail,
+            originalCompanyId: employee.companyId
+          })
           setError('Company information not found. Please contact your administrator.')
           setShowOTP(false)
           setLoading(false)
           return
         }
+        
+        console.log(`[ConsumerLogin] ✅ Company found: ${company.name} (ID: ${company.id})`)
 
         // Check if employee orders are enabled
         // undefined/null means not set, which should default to false (disabled)

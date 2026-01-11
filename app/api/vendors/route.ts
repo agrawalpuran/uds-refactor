@@ -20,10 +20,9 @@ export async function GET(request: Request) {
         if (!vendor) {
           console.log(`[API /vendors] Vendor not found for email: ${sanitizedEmail}`)
           return NextResponse.json({ error: 'Vendor not found with this email' }, { status: 404 })
-        }
         console.log(`[API /vendors] ✅ Vendor found: ${vendor.id} (${vendor.name})`)
         return NextResponse.json(vendor)
-      } catch (dbError: any) {
+  } catch (dbError: any) {
         // CRITICAL: Differentiate between "not found" and "database error"
         console.error(`[API /vendors] ❌ Database error during vendor lookup:`, dbError)
         
@@ -40,58 +39,212 @@ export async function GET(request: Request) {
             details: 'MongoDB connection failed',
             code: 'DB_CONNECTION_ERROR'
           }, { status: 500 })
-        }
         
         // For other errors, return generic error (don't expose vendor existence)
         return NextResponse.json({ 
           error: 'Error looking up vendor. Please try again.',
           code: 'QUERY_ERROR'
         }, { status: 500 })
-      }
     }
 
     if (vendorId) {
       const vendor = await getVendorById(vendorId)
-      return NextResponse.json(vendor)
-    }
+      if (!vendor) {
+      return NextResponse.json({ error: 'Vendor not found' }, { status: 404 })
+    return NextResponse.json(vendor)
 
+    }
     const vendors = await getAllVendors()
     return NextResponse.json(vendors)
   } catch (error: any) {
     console.error('[API /vendors] ❌ Unexpected error:', error)
-    return NextResponse.json({ 
-      error: error.message || 'Internal server error',
-      code: 'UNEXPECTED_ERROR'
-    }, { status: 500 })
-  }
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({ 
+        error: 'Invalid JSON in request body' 
+      }, { status: 400 })
+    
+    // Validate required fields
+    if (!body.name || !body.email) {
+      return NextResponse.json({ 
+        error: 'Vendor name and email are required' 
+      }, { status: 400 })
+    
+    }
     const vendor = await createVendor(body)
     return NextResponse.json(vendor)
   } catch (error: any) {
     console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
+    
+    // Return 400 for validation errors, 500 for server errors
+    if (error.message && (
+      error.message.includes('required') ||
+      error.message.includes('invalid') ||
+      error.message.includes('duplicate') ||
+      error.message.includes('already exists')
+    )) {
+      return NextResponse.json({ 
+        error: error.message || 'Invalid request' 
+      }, { status: 400 })
+    
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 
 export async function PUT(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({ 
+        error: 'Invalid JSON in request body' 
+      }, { status: 400 })
+    
     const { vendorId, ...vendorData } = body
     
     if (!vendorId) {
       return NextResponse.json({ error: 'Vendor ID is required' }, { status: 400 })
+    
+    // Validate vendor ID format
     }
+    if (typeof vendorId !== 'string' || vendorId.trim() === '') {
+      return NextResponse.json({ 
+        error: 'Invalid vendor ID format' 
+      }, { status: 400 })
     
     const vendor = await updateVendor(vendorId, vendorData)
     return NextResponse.json(vendor)
   } catch (error: any) {
     console.error('API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
+    
+    // Return 400 for validation errors, 500 for server errors
+    if (error.message && (
+      error.message.includes('required') ||
+      error.message.includes('invalid') ||
+      error.message.includes('not found')
+    )) {
+      return NextResponse.json({ 
+        error: error.message || 'Invalid request' 
+      }, { status: 400 })
+    
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 
 

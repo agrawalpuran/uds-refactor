@@ -13,7 +13,14 @@ import '@/lib/models/LogisticsProviderTestLog'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { providerId, testType, testParams, executedBy } = body
 
     if (!providerId || !testType) {
@@ -21,16 +28,15 @@ export async function POST(request: Request) {
         { error: 'providerId and testType are required' },
         { status: 400 }
       )
-    }
 
     // Get provider configuration
     const provider = await getShipmentServiceProviderById(providerId)
+    }
     if (!provider) {
       return NextResponse.json(
         { error: 'Provider not found' },
         { status: 404 }
       )
-    }
 
     // Get provider instance (without company credentials for test mode)
     // For testing, we'll use test credentials from request OR stored authConfig
@@ -70,7 +76,7 @@ export async function POST(request: Request) {
       const hasTestCredentials = Object.keys(credentials).length > 0
       console.log(`[provider-test] Using test credentials: ${hasTestCredentials}`)
       if (hasTestCredentials) {
-        console.log(`[provider-test] Test credentials keys: ${Object.keys(credentials).join(', ')}`)
+        console.log(`[provider-test] Test credentials keys: ${Object.keys(credentials).join(', ')`)
       }
       
       providerInstance = await getProviderInstance(
@@ -92,7 +98,6 @@ export async function POST(request: Request) {
         },
         { status: 500 }
       )
-    }
 
     let result: any = {}
     let success = false
@@ -242,11 +247,40 @@ export async function POST(request: Request) {
     })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/provider-test POST:', error)
+    console.error('API Error in /api/superadmin/provider-test POST:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -268,19 +302,48 @@ export async function GET(request: Request) {
         { error: 'providerId is required' },
         { status: 400 }
       )
-    }
 
+    }
     const { getTestLogs } = await import('@/lib/db/provider-test-access')
     const logs = await getTestLogs(providerId, testType, limit)
 
     return NextResponse.json({ logs })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/provider-test GET:', error)
+    console.error('API Error in /api/superadmin/provider-test GET:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

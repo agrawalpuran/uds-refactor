@@ -9,7 +9,14 @@ import {
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { vendor_indent_id, vendor_id, grn_number, grn_date, remarks } = body
 
     if (!vendor_indent_id || !vendor_id || !grn_number || !grn_date) {
@@ -17,8 +24,8 @@ export async function POST(request: Request) {
         { error: 'Missing required fields' },
         { status: 400 }
       )
-    }
 
+    }
     const grn = await createGRN({
       vendor_indent_id,
       vendor_id,
@@ -30,16 +37,46 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, grn }, { status: 201 })
   } catch (error: any) {
     console.error('Error creating GRN:', error)
+    
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to create GRN' },
+      { error: errorMessage },
       { status: 500 }
     )
-  }
 }
 
 export async function PATCH(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { grn_id, action } = body
 
     if (!grn_id || !action) {
@@ -47,13 +84,12 @@ export async function PATCH(request: Request) {
         { error: 'grn_id and action are required' },
         { status: 400 }
       )
-    }
 
     if (action === 'submit') {
-      const grn = await submitGRN(grn_id)
+    }
+    const grn = await submitGRN(grn_id)
       
       return NextResponse.json({ success: true, grn })
-    }
 
     return NextResponse.json(
       { error: 'Invalid action' },
@@ -61,10 +97,33 @@ export async function PATCH(request: Request) {
     )
   } catch (error: any) {
     console.error('Error updating GRN:', error)
+    
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to update GRN' },
+      { error: errorMessage },
       { status: 500 }
     )
-  }
 }
 

@@ -29,11 +29,11 @@ export async function GET(request: Request) {
         { error: 'companyId and vendorId are required' },
         { status: 400 }
       )
-    }
 
     await connectDB()
 
     // Get company to check shipmentRequestMode
+    }
     const company = await Company.findOne({ id: companyId })
       .select('shipmentRequestMode name')
       .lean()
@@ -43,7 +43,6 @@ export async function GET(request: Request) {
         { error: 'Company not found' },
         { status: 404 }
       )
-    }
 
     // Ensure company is a single document (not an array)
     const companyDoc = Array.isArray(company) ? company[0] : company
@@ -62,7 +61,8 @@ export async function GET(request: Request) {
       vendorRouting = await getActiveVendorRoutingForCompany(vendorId, companyId)
       hasRouting = !!vendorRouting
 
-      if (vendorRouting) {
+    }
+    if (vendorRouting) {
         primaryCourier = {
           code: vendorRouting.primaryCourierCode,
           name: null, // Will be resolved from provider couriers
@@ -128,12 +128,40 @@ export async function GET(request: Request) {
     return NextResponse.json(response, { status: 200 })
   } catch (error: any) {
     console.error('[shipping-context API] Error:', error)
+    console.error('[shipping-context API] Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

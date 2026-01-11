@@ -16,15 +16,14 @@ export async function GET(
         { error: 'Product ID is required' },
         { status: 400 }
       )
-    }
 
     // Validate product ID format (6-digit numeric)
+    }
     if (!/^\d{6}$/.test(productId)) {
       return NextResponse.json(
         { error: 'Invalid product ID format. Must be 6-digit numeric string.' },
         { status: 400 }
       )
-    }
 
     const sizeChart = await getProductSizeChart(productId)
 
@@ -33,13 +32,44 @@ export async function GET(
         { error: 'Size chart not found for this product' },
         { status: 404 }
       )
-    }
 
     return NextResponse.json(sizeChart, { status: 200 })
   } catch (error: any) {
     console.error('Error fetching size chart:', error)
+    console.error('Error fetching size chart:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch size chart' },
+      { error: errorMessage },
       { status: 500 }
     )
   }

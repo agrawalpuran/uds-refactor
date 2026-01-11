@@ -24,7 +24,7 @@ export interface ICompany extends Document {
   require_company_admin_approval?: boolean // @deprecated Use require_company_admin_po_approval instead
   // Shipping Configuration
   shipmentRequestMode?: 'MANUAL' | 'AUTOMATIC' // Shipment request mode (company-level, default: MANUAL)
-  adminId?: mongoose.Types.ObjectId
+  adminId?: string // String ID reference to Employee (6-digit numeric string)
   // Structured address fields
   address_line_1?: string // L1: House / Building / Street (OPTIONAL)
   address_line_2?: string // L2: Area / Locality (OPTIONAL)
@@ -144,9 +144,15 @@ const CompanySchema = new Schema<ICompany>(
       required: false,
     },
     adminId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
-      index: true,
+      type: String,
+      required: false,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits if provided
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Admin ID must be a 6-digit numeric string (e.g., "300001")'
+      }
     },
     address_line_1: {
       type: String,

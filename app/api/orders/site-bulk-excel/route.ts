@@ -56,11 +56,10 @@ export async function POST(request: NextRequest) {
 
     if (!file) {
       return NextResponse.json({ error: 'Excel file is required' }, { status: 400 })
-    }
 
+    }
     if (!adminEmail) {
       return NextResponse.json({ error: 'Admin email is required' }, { status: 400 })
-    }
 
     // Verify Site Admin access and get location
     const location = await getLocationByAdminEmail(adminEmail.trim().toLowerCase())
@@ -68,48 +67,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only Site Admins can upload bulk orders via Excel' 
       }, { status: 403 })
-    }
 
-    // CRITICAL: getLocationByAdminEmail returns a plain object with 'id' (string), not '_id'
-    // We need to fetch the Location again by its string id to get the ObjectId _id
+    // Use location string ID directly
     const locationIdStr = location.id
+    }
     if (!locationIdStr) {
       return NextResponse.json({ 
         error: 'Location ID not found' 
       }, { status: 400 })
-    }
 
-    // Fetch location by string id to get the ObjectId _id for querying employees
-    const locationDoc: any = await Location.findOne({ id: locationIdStr }).lean()
-    if (!locationDoc || !locationDoc._id) {
-      return NextResponse.json({ 
-        error: 'Location not found in database' 
-      }, { status: 404 })
-    }
-
-    const locationId = locationDoc._id // This is the ObjectId needed for Employee queries
-    const locationName = location.name || locationDoc.name || 'Location'
+    const locationName = location.name || 'Location'
     
-    // Get companyId from location for eligibility validation
+    // Get companyId from location for eligibility validation - use string ID
     let companyId: string | null = null
-    if (locationDoc.companyId) {
-      if (typeof locationDoc.companyId === 'object' && locationDoc.companyId._id) {
-        companyId = locationDoc.companyId._id.toString()
-      } else if (typeof locationDoc.companyId === 'object' && locationDoc.companyId.id) {
-        companyId = locationDoc.companyId.id
-      } else if (typeof locationDoc.companyId === 'string') {
-        companyId = locationDoc.companyId
-      }
+    if (location.companyId) {
+      companyId = String(location.companyId)
     }
     
     if (!companyId) {
       return NextResponse.json({ 
         error: 'Company ID not found for location' 
       }, { status: 400 })
-    }
 
     // Read Excel file
     const arrayBuffer = await file.arrayBuffer()
+    }
     const workbook = XLSX.read(arrayBuffer, { type: 'array' })
 
     // Get "Bulk Orders" sheet
@@ -118,16 +100,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ 
         error: 'Excel file must contain a "Bulk Orders" sheet' 
       }, { status: 400 })
-    }
 
     // Convert sheet to JSON
+    }
     const rows = XLSX.utils.sheet_to_json(bulkOrdersSheet, { header: 1, defval: '' })
 
     if (rows.length < 2) {
       return NextResponse.json({ 
         error: 'Excel must contain at least a header row and one data row' 
       }, { status: 400 })
-    }
 
     // Parse headers (case-insensitive, flexible column matching)
     const headers = (Array.isArray(rows[0]) ? rows[0] : []).map((h: any) => String(h).trim().toLowerCase())
@@ -145,11 +126,11 @@ export async function POST(request: NextRequest) {
       h === 'shipping location' || h === 'shippinglocation' || h === 'location' || h === 'dispatch location'
     )
 
+    }
     if (employeeIdIndex === -1 || productCodeIndex === -1 || sizeIndex === -1 || quantityIndex === -1) {
       return NextResponse.json({ 
         error: 'Excel must contain columns: Employee ID, Product Code, Size, Quantity' 
       }, { status: 400 })
-    }
 
     // Parse orders from Excel
     const orders: BulkOrderRow[] = []
@@ -179,11 +160,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ 
         error: 'No valid orders found in Excel file' 
       }, { status: 400 })
-    }
 
-    // Get all employees in this location for validation
+    // Get all employees in this location for validation - use string ID
+    }
     const locationEmployees = await Employee.find({ 
-      locationId: locationId,
+      locationId: locationIdStr,
       status: 'active' 
     })
       .lean()
@@ -199,13 +180,10 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    // Get all products by code for validation
+    // Get all products by code for validation - use string IDs only
     const productCodes = Array.from(new Set(orders.map(o => o.productCode)))
     const products = await Uniform.find({
-      $or: [
-        { id: { $in: productCodes } },
-        { _id: { $in: productCodes.filter(c => mongoose.Types.ObjectId.isValid(c)).map(c => new mongoose.Types.ObjectId(c)) } }
-      ]
+      id: { $in: productCodes }
     })
       .lean()
 
@@ -213,9 +191,6 @@ export async function POST(request: NextRequest) {
     products.forEach((product: any) => {
       if (product.id) {
         productByCodeMap.set(product.id, product)
-      }
-      if (product._id) {
-        productByCodeMap.set(product._id.toString(), product)
       }
     })
 
@@ -297,15 +272,14 @@ export async function POST(request: NextRequest) {
           size: row.size,
           quantity: row.quantity,
           status: 'failed',
-          error: `Size "${row.size}" is not supported for this product. Supported sizes: ${productSizes.join(', ')}`
+          error: `Size "${row.size}" is not supported for this product. Supported sizes: ${productSizes.join(', ')`
         })
         continue
       }
 
-      // Validate eligibility (subcategory-based)
-      // Use product ObjectId for validation (same as Company Admin endpoint)
-      const productObjectId = product._id?.toString()
-      if (!productObjectId) {
+      // Validate eligibility (subcategory-based) - use string product ID
+      const productId = product.id
+      if (!productId) {
         results.push({
           rowNumber: row.rowNumber,
           employeeId: row.employeeId,
@@ -319,13 +293,12 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        // Use employeeId (readable ID) for validation, not _id
-        // The validation function looks up by employeeId or id field
-        const employeeIdForValidation = employee.employeeId || employee.id || employee._id.toString()
+        // Use employeeId (readable ID) for validation
+        const employeeIdForValidation = employee.employeeId || employee.id || String(employee._id)
         
         const validation = await validateBulkOrderItemSubcategoryEligibility(
           employeeIdForValidation,
-          productObjectId, // Use ObjectId string for validation function
+          productId, // Use string ID for validation function
           row.quantity,
           companyId // CRITICAL: Pass companyId, not size!
         )
@@ -385,8 +358,10 @@ export async function POST(request: NextRequest) {
       if (!employee) continue
 
       try {
-        // Get employee for delivery address and dispatch preference
-        const fullEmployee: any = await Employee.findById(employee._id)
+        // Get employee for delivery address and dispatch preference - use string ID
+        const fullEmployee: any = await Employee.findOne({ 
+          id: employee.id || employee.employeeId 
+        })
           .select('address dispatchPreference employeeId id')
           .lean()
 
@@ -406,8 +381,8 @@ export async function POST(request: NextRequest) {
           continue
         }
 
-        // Use employeeId or id field for createOrder (same as Company Admin)
-        const employeeIdString = fullEmployee.employeeId || fullEmployee.id || employee._id.toString()
+        // Use employeeId or id field for createOrder
+        const employeeIdString = fullEmployee.employeeId || fullEmployee.id
 
         const dispatchPreference = fullEmployee?.dispatchPreference || 'standard'
         let estimatedDeliveryTime = '5-7 business days'
@@ -445,7 +420,7 @@ export async function POST(request: NextRequest) {
             size: item.size,
             quantity: item.quantity,
             status: 'success',
-            orderId: order.id || order._id?.toString()
+            orderId: order.id
           })
         })
       } catch (orderError: any) {
@@ -481,8 +456,40 @@ export async function POST(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Error processing site bulk orders:', error)
+    console.error('Error processing site bulk orders:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to process bulk orders' },
+      { error: errorMessage },
       { status: 500 }
     )
   }

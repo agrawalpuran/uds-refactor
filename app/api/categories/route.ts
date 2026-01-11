@@ -41,11 +41,31 @@ export async function GET(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Error fetching categories:', error)
+    
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.name === 'MongoNetworkError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 503 for connection errors, 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch categories' },
-      { status: 500 }
+      { error: errorMessage },
+      { status: isConnectionError ? 503 : 500 }
     )
-  }
 }
 
 /**
@@ -56,7 +76,16 @@ export async function POST(request: NextRequest) {
   try {
     await connectDB()
     
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
+    }
+    
     const { companyId, name, renewalUnit = 'months' } = body
     
     if (!companyId || !name) {
@@ -66,30 +95,16 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    // Get company
-    if (!mongoose.connection.db) {
-      return NextResponse.json(
-        { error: 'Database connection not available' },
-        { status: 500 }
-      )
-    }
-    const company = await mongoose.connection.db.collection('companies').findOne({
-      $or: [
-        { id: companyId },
-        ...(mongoose.Types.ObjectId.isValid(companyId) ? [{ _id: new mongoose.Types.ObjectId(companyId) }] : [])
-      ]
-    })
-    
+    // Get company - use string ID
+    const Company = mongoose.model('Company')
+    const company = await Company.findOne({ id: companyId })
     if (!company) {
-      return NextResponse.json(
-        { error: 'Company not found' },
-        { status: 404 }
-      )
+      return NextResponse.json({ error: 'Company not found' }, { status: 404 })
     }
     
-    // Check if category with same name already exists
+    // Check if category with same name already exists - use string ID
     const existing = await ProductCategory.findOne({
-      companyId: company._id,
+      companyId: company.id,
       name: { $regex: new RegExp(`^${name}$`, 'i') }
     })
     
@@ -106,11 +121,11 @@ export async function POST(request: NextRequest) {
       categoryId++
     }
     
-    // Create category
+    // Create category - use string ID
     const category = await ProductCategory.create({
       id: categoryId.toString(),
       name: name.trim(),
-      companyId: company._id,
+      companyId: company.id,
       renewalUnit: renewalUnit === 'years' ? 'years' : 'months',
       isSystemCategory: false,
       status: 'active'
@@ -120,9 +135,8 @@ export async function POST(request: NextRequest) {
       success: true,
       category: {
         id: category.id,
-        _id: category._id.toString(),
         name: category.name,
-        companyId: category.companyId.toString(),
+        companyId: String(category.companyId),
         renewalUnit: category.renewalUnit,
         isSystemCategory: category.isSystemCategory,
         status: category.status
@@ -130,8 +144,40 @@ export async function POST(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Error creating category:', error)
+    console.error('Error creating category:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to create category' },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -145,7 +191,16 @@ export async function PUT(request: NextRequest) {
   try {
     await connectDB()
     
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
+    }
+    
     const { categoryId, name, renewalUnit, status } = body
     
     if (!categoryId) {
@@ -155,13 +210,8 @@ export async function PUT(request: NextRequest) {
       )
     }
     
-    // Find category
-    let category = null
-    if (mongoose.Types.ObjectId.isValid(categoryId)) {
-      category = await ProductCategory.findById(categoryId)
-    } else {
-      category = await ProductCategory.findOne({ id: categoryId })
-    }
+    // Find category - use string ID
+    const category = await ProductCategory.findOne({ id: categoryId })
     
     if (!category) {
       return NextResponse.json(
@@ -187,9 +237,8 @@ export async function PUT(request: NextRequest) {
       success: true,
       category: {
         id: category.id,
-        _id: category._id.toString(),
         name: category.name,
-        companyId: category.companyId.toString(),
+        companyId: String(category.companyId),
         renewalUnit: category.renewalUnit,
         isSystemCategory: category.isSystemCategory,
         status: category.status
@@ -197,8 +246,40 @@ export async function PUT(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Error updating category:', error)
+    console.error('Error updating category:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to update category' },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -222,13 +303,8 @@ export async function DELETE(request: NextRequest) {
       )
     }
     
-    // Find category
-    let category = null
-    if (mongoose.Types.ObjectId.isValid(categoryId)) {
-      category = await ProductCategory.findById(categoryId)
-    } else {
-      category = await ProductCategory.findOne({ id: categoryId })
-    }
+    // Find category - use string ID
+    const category = await ProductCategory.findOne({ id: categoryId })
     
     if (!category) {
       return NextResponse.json(
@@ -255,8 +331,40 @@ export async function DELETE(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Error deleting category:', error)
+    console.error('Error deleting category:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to delete category' },
+      { error: errorMessage },
       { status: 500 }
     )
   }

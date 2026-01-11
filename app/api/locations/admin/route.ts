@@ -21,17 +21,42 @@ export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
     await connectDB()
-    const body = await request.json()
+    
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({ 
+        error: 'Invalid JSON in request body' 
+      }, { status: 400 })
+    
     const { locationId, adminId, adminEmail, companyId } = body
 
     console.log('POST /api/locations/admin - Request body:', { locationId, adminId, adminEmail, companyId })
 
+    // Validate required parameters
     if (!locationId || !adminEmail || !companyId) {
       console.error('Missing required fields:', { locationId: !!locationId, adminEmail: !!adminEmail, companyId: !!companyId })
       return NextResponse.json({ 
         error: 'Location ID, admin email, and company ID are required' 
       }, { status: 400 })
-    }
+    
+    // Validate parameter formats
+    if (typeof locationId !== 'string' || locationId.trim() === '') {
+      return NextResponse.json({ 
+        error: 'Invalid location ID format' 
+      }, { status: 400 })
+    
+    if (typeof adminEmail !== 'string' || adminEmail.trim() === '' || !adminEmail.includes('@')) {
+      return NextResponse.json({ 
+        error: 'Invalid admin email format' 
+      }, { status: 400 })
+    
+    if (typeof companyId !== 'string' || companyId.trim() === '') {
+      return NextResponse.json({ 
+        error: 'Invalid company ID format' 
+      }, { status: 400 })
 
     // Verify Company Admin authorization
     const isAdmin = await isCompanyAdmin(adminEmail, companyId)
@@ -39,48 +64,48 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only Company Admins can assign Location Admins' 
       }, { status: 403 })
-    }
 
     // Get location to verify it belongs to the company
     const location = await getLocationById(locationId)
+    }
     if (!location) {
       return NextResponse.json({ error: 'Location not found' }, { status: 404 })
-    }
 
     const locationCompanyId = location.companyId?.id || location.companyId
     if (locationCompanyId !== companyId) {
       return NextResponse.json({ 
         error: 'Location does not belong to your company' 
       }, { status: 403 })
-    }
 
     // Handle adminId assignment or removal
     // adminId can be: string (employeeId), null, undefined, or empty string
     if (adminId && adminId.trim() !== '') {
       // Assign new admin - verify employee exists and belongs to the same company
-      const employee = await Employee.findOne({ employeeId: adminId })
+    }
+    const employee = await Employee.findOne({ employeeId: adminId })
       if (!employee) {
+        return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+    }
+    if (!employee) {
         return NextResponse.json({ 
           error: `Employee not found: ${adminId}` 
         }, { status: 404 })
-      }
 
-      // Verify employee belongs to the same company
-      const employeeCompany = await Company.findById(employee.companyId)
-      if (!employeeCompany || employeeCompany.id !== companyId) {
+      // Verify employee belongs to the same company - use string ID
+      const employeeCompanyId = String(employee.companyId)
+      if (employeeCompanyId !== companyId) {
         return NextResponse.json({ 
           error: `Employee ${adminId} does not belong to your company` 
         }, { status: 403 })
-      }
 
       // Update location with new admin
-      const updated = await updateLocation(locationId, { adminId })
+    }
+    const updated = await updateLocation(locationId, { adminId })
       return NextResponse.json({ 
         success: true, 
         location: updated,
         message: 'Location Admin assigned successfully'
-      })
-    } else {
+      }) else {
       // Remove Location Admin (adminId is null, undefined, or empty)
       console.log('Removing Location Admin for location:', locationId)
       const updated = await updateLocation(locationId, { adminId: null as any })
@@ -90,11 +115,61 @@ export async function POST(request: Request) {
         location: updated,
         message: 'Location Admin removed successfully'
       })
-    }
   } catch (error: any) {
     console.error('API Error in /api/locations/admin POST:', error)
-    return NextResponse.json({ error: error.message || 'Failed to assign Location Admin' }, { status: 500 })
-  }
+    
+    // Return 400 for validation/input errors, 401 for auth errors, 500 for server errors
+    if (error.message && (
+      error.message.includes('required') ||
+      error.message.includes('invalid') ||
+      error.message.includes('not found')
+    )) {
+      return NextResponse.json({ 
+        error: error.message || 'Invalid request' 
+      }, { status: 400 })
+    
+    if (error.message && error.message.includes('Unauthorized')) {
+      return NextResponse.json({ 
+        error: error.message || 'Unauthorized' 
+      }, { status: 401 })
+    
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 
 /**
@@ -110,11 +185,23 @@ export async function GET(request: Request) {
     const adminEmail = searchParams.get('adminEmail')
     const locationId = searchParams.get('locationId') // Optional: filter by location
 
+    // Validate required parameters
     if (!companyId || !adminEmail) {
       return NextResponse.json({ 
         error: 'Company ID and admin email are required' 
       }, { status: 400 })
+    
+    // Validate parameter formats
     }
+    if (typeof companyId !== 'string' || companyId.trim() === '') {
+      return NextResponse.json({ 
+        error: 'Invalid company ID format' 
+      }, { status: 400 })
+    
+    if (typeof adminEmail !== 'string' || adminEmail.trim() === '' || !adminEmail.includes('@')) {
+      return NextResponse.json({ 
+        error: 'Invalid admin email format' 
+      }, { status: 400 })
 
     // Verify Company Admin authorization
     const isAdmin = await isCompanyAdmin(adminEmail, companyId)
@@ -122,10 +209,10 @@ export async function GET(request: Request) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only Company Admins can view eligible employees' 
       }, { status: 403 })
-    }
 
     // Get employees - filter by location if locationId is provided
     let employees: any[] = []
+    }
     if (locationId) {
       console.log(`[GET /api/locations/admin] ===== START =====`)
       console.log(`[GET /api/locations/admin] Request params: locationId=${locationId}, companyId=${companyId}, adminEmail=${adminEmail}`)
@@ -137,7 +224,6 @@ export async function GET(request: Request) {
         return NextResponse.json({ 
           error: 'Location not found' 
         }, { status: 404 })
-      }
       
       console.log(`[GET /api/locations/admin] Location found:`, {
         id: location.id,
@@ -155,7 +241,6 @@ export async function GET(request: Request) {
         return NextResponse.json({ 
           error: 'Location does not belong to your company' 
         }, { status: 403 })
-      }
       
       // Get employees for the specific location
       // IMPORTANT: If no location-specific employees found, fallback to ALL company employees
@@ -250,7 +335,54 @@ export async function GET(request: Request) {
     return NextResponse.json({ employees: eligibleEmployees })
   } catch (error: any) {
     console.error('API Error in /api/locations/admin GET:', error)
-    return NextResponse.json({ error: error.message || 'Failed to fetch eligible employees' }, { status: 500 })
-  }
+    
+    // Return 400 for validation/input errors, 500 for server errors
+    if (error.message && (
+      error.message.includes('required') ||
+      error.message.includes('invalid') ||
+      error.message.includes('not found') ||
+      error.message.includes('Unauthorized')
+    )) {
+      return NextResponse.json({ 
+        error: error.message || 'Invalid request' 
+      }, { status: 400 })
+    
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 

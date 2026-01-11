@@ -2,8 +2,8 @@ import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IGoodsReceiptNote extends Document {
   id: string
-  vendor_indent_id: mongoose.Types.ObjectId
-  vendor_id: mongoose.Types.ObjectId
+  vendor_indent_id: string // String ID reference to VendorIndent (6-digit numeric string)
+  vendor_id: string // String ID reference to Vendor (6-digit numeric string)
   grn_number: string
   grn_date: Date
   status: 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED'
@@ -20,16 +20,24 @@ const GoodsReceiptNoteSchema = new Schema<IGoodsReceiptNote>(
       unique: true,
     },
     vendor_indent_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'VendorIndent',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Vendor Indent ID must be a 6-digit numeric string'
+      }
     },
     vendor_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'Vendor',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     grn_number: {
       type: String,

@@ -42,8 +42,8 @@ export async function GET(request: Request) {
         { error: 'Vendor ID is required. Please ensure you are logged in as a vendor.' },
         { status: 401 }
       )
-    }
 
+    }
     const { searchParams } = new URL(request.url)
     const isActive = searchParams.get('isActive')
     const isPrimary = searchParams.get('isPrimary')
@@ -62,12 +62,40 @@ export async function GET(request: Request) {
   } catch (error: any) {
     console.error('[API /vendor/warehouses GET] Error:', error)
     console.error('[API /vendor/warehouses GET] Error stack:', error.stack)
+    console.error('[API /vendor/warehouses GET] Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -79,7 +107,14 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     
     // Get vendorId from query param, header, or body
     const vendorId = getVendorIdFromRequest(request) || body.vendorId
@@ -89,8 +124,8 @@ export async function POST(request: Request) {
         { error: 'Vendor ID is required. Please ensure you are logged in as a vendor.' },
         { status: 401 }
       )
-    }
     
+    }
     const {
       warehouseName,
       addressLine1,
@@ -110,15 +145,14 @@ export async function POST(request: Request) {
         { error: 'warehouseName, addressLine1, city, state, and pincode are required' },
         { status: 400 }
       )
-    }
 
     // Validate pincode format
+    }
     if (!/^\d{6}$/.test(pincode)) {
       return NextResponse.json(
         { error: 'Pincode must be exactly 6 digits' },
         { status: 400 }
       )
-    }
 
     console.log('[API /vendor/warehouses POST] Creating warehouse for vendor:', vendorId)
 
@@ -147,12 +181,40 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error('[API /vendor/warehouses POST] Error:', error)
     console.error('[API /vendor/warehouses POST] Error stack:', error.stack)
+    console.error('[API /vendor/warehouses POST] Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

@@ -9,7 +9,7 @@ export interface ItemEligibility {
 
 export interface IDesignationProductEligibility extends Document {
   id: string
-  companyId: mongoose.Types.ObjectId
+  companyId: string // String ID reference to Company (6-digit numeric string)
   companyName: string
   designation: string // e.g., "General Manager", "Office Admin"
   gender?: 'male' | 'female' | 'unisex' // Gender filter: 'male', 'female', or 'unisex' (defaults to 'unisex' for backward compatibility)
@@ -43,7 +43,16 @@ const DesignationProductEligibilitySchema = new Schema<IDesignationProductEligib
     id: { type: String, required: true, unique: true },
     // Note: companyId doesn't need index: true because it's the first field in compound indexes below
     // MongoDB can use compound indexes for queries on just companyId
-    companyId: { type: Schema.Types.ObjectId, ref: 'Company', required: true },
+    companyId: {
+      type: String,
+      required: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
+    },
     companyName: { type: String, required: true },
     designation: { type: String, required: true },
     gender: { type: String, enum: ['male', 'female', 'unisex'], default: 'unisex' }, // Gender filter

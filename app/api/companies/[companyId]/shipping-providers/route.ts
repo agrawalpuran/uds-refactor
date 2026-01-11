@@ -28,21 +28,53 @@ export async function GET(
         { error: 'Company ID is required' },
         { status: 400 }
       )
-    }
 
+    }
     const providers = await getEnabledProvidersForCompany(companyId)
     
     return NextResponse.json(providers)
   } catch (error: any) {
     console.error('API Error in /api/companies/[companyId]/shipping-providers GET:', error)
+    console.error('API Error in /api/companies/[companyId]/shipping-providers GET:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    }
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    }
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    }
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
+    }
   }
 }
 
@@ -57,7 +89,14 @@ export async function POST(
   try {
     await connectDB()
     const { companyId } = await params
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { providerId, isEnabled = true, isDefault = false, credentials, createdBy } = body
 
     if (!companyId) {
@@ -65,14 +104,13 @@ export async function POST(
         { error: 'Company ID is required' },
         { status: 400 }
       )
-    }
 
+    }
     if (!providerId) {
       return NextResponse.json(
         { error: 'Provider ID is required' },
         { status: 400 }
       )
-    }
 
     // Validate company ID format (6-digit numeric string)
     if (!/^\d{6}$/.test(companyId)) {
@@ -80,7 +118,6 @@ export async function POST(
         { error: 'Company ID must be a 6-digit numeric string' },
         { status: 400 }
       )
-    }
 
     // Validate provider exists and is active
     const provider: any = await ShipmentServiceProvider.findOne({ 
@@ -175,14 +212,46 @@ export async function POST(
     return NextResponse.json(response, { status: existing ? 200 : 201 })
   } catch (error: any) {
     console.error('API Error in /api/companies/[companyId]/shipping-providers POST:', error)
+    console.error('API Error in /api/companies/[companyId]/shipping-providers POST:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    }
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    }
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    }
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
+    }
   }
 }
 
@@ -197,7 +266,16 @@ export async function PUT(
   try {
     await connectDB()
     const { companyId } = await params
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
+    }
+    
     const { providerId, isEnabled, isDefault, credentials, updatedBy } = body
 
     if (!companyId) {
@@ -206,7 +284,7 @@ export async function PUT(
         { status: 400 }
       )
     }
-
+    
     if (!providerId) {
       return NextResponse.json(
         { error: 'Provider ID is required' },
@@ -278,16 +356,49 @@ export async function PUT(
     }
 
     return NextResponse.json(response, { status: 200 })
+    }
   } catch (error: any) {
     console.error('API Error in /api/companies/[companyId]/shipping-providers PUT:', error)
+    console.error('API Error in /api/companies/[companyId]/shipping-providers PUT:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    }
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    }
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    }
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
+    }
   }
 }
 

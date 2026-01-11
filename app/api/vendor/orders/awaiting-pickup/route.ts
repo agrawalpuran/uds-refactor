@@ -27,11 +27,11 @@ export async function GET(request: Request) {
         { error: 'Vendor ID is required' },
         { status: 400 }
       )
-    }
 
     await connectDB()
 
     // Find all API shipments for this vendor with AWB
+    }
     const shipments = await Shipment.find({
       vendorId: vendorId,
       shipmentMode: 'API',
@@ -147,14 +147,42 @@ export async function GET(request: Request) {
       orders: ordersAwaitingPickup,
       count: ordersAwaitingPickup.length,
     }, { status: 200 })
-
   } catch (error: any) {
     console.error('[API /vendor/orders/awaiting-pickup] Error:', error)
+    console.error('[API /vendor/orders/awaiting-pickup] Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Failed to fetch orders awaiting pickup',
-        type: 'api_error',
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

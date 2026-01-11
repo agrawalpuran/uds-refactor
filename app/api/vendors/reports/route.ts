@@ -19,29 +19,26 @@ export async function GET(request: NextRequest) {
         { error: 'Vendor ID is required' },
         { status: 400 }
       )
-    }
 
     // Return full comprehensive report by default
     if (!reportType || reportType === 'full') {
       const reports = await getVendorReports(vendorId)
       return NextResponse.json(reports)
-    }
 
     // Return specific report type
     if (reportType === 'sales-patterns') {
-      const patterns = await getVendorSalesPatterns(vendorId, period || 'monthly')
-      return NextResponse.json({ patterns, period: period || 'monthly' })
     }
+    const patterns = await getVendorSalesPatterns(vendorId, period || 'monthly')
+      return NextResponse.json({ patterns, period: period || 'monthly' })
 
     if (reportType === 'order-status') {
       const breakdown = await getVendorOrderStatusBreakdown(vendorId)
       return NextResponse.json({ breakdown })
-    }
 
     if (reportType === 'business-volume') {
-      const volume = await getVendorBusinessVolumeByCompany(vendorId)
-      return NextResponse.json({ volume })
     }
+    const volume = await getVendorBusinessVolumeByCompany(vendorId)
+      return NextResponse.json({ volume })
 
     return NextResponse.json(
       { error: 'Invalid report type. Use: full, sales-patterns, order-status, or business-volume' },
@@ -49,10 +46,30 @@ export async function GET(request: NextRequest) {
     )
   } catch (error: any) {
     console.error('API Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch vendor reports' },
+      { error: errorMessage },
       { status: 500 }
     )
-  }
 }
 

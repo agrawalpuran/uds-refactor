@@ -15,8 +15,8 @@ import mongoose, { Schema, Document } from 'mongoose'
 export interface ILocation extends Document {
   id: string // 6-digit numeric ID (e.g., "400001")
   name: string // Location name (e.g., "Mumbai Office", "Delhi Warehouse")
-  companyId: mongoose.Types.ObjectId // Reference to Company
-  adminId: mongoose.Types.ObjectId // Location Admin (employee) - REQUIRED
+  companyId: string // String ID reference to Company (6-digit numeric string)
+  adminId?: string // String ID reference to Employee (6-digit numeric string) - REQUIRED for proper location management
   // Structured address fields
   address_line_1: string // L1: House / Building / Street (REQUIRED)
   address_line_2?: string // L2: Area / Locality (OPTIONAL)
@@ -53,13 +53,26 @@ const LocationSchema = new Schema<ILocation>(
       trim: true,
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     adminId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
+      type: String,
+      required: false,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits if provided
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Admin ID must be a 6-digit numeric string (e.g., "300001")'
+      }
       // Optional: can be set later via updateLocation
       // Required for proper location management, but optional for initial creation
     },

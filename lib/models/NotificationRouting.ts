@@ -14,7 +14,7 @@ import mongoose, { Schema, Document } from 'mongoose'
 export interface INotificationRouting extends Document {
   routingId: string // Numeric ID (6-12 digits, e.g., "700001")
   eventId: string // Foreign key → NotificationEvent.eventId
-  companyId: mongoose.Types.ObjectId // Foreign key → Company._id
+  companyId: string // String ID reference to Company (6-digit numeric string)
   sendToEmployee: boolean // Send to employee who raised the order/PR
   sendToVendor: boolean // Send to vendor assigned to the order
   sendToLocationAdmin: boolean // Send to location admin
@@ -47,10 +47,14 @@ const NotificationRoutingSchema = new Schema<INotificationRouting>(
       ref: 'NotificationEvent',
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     sendToEmployee: {
       type: Boolean,

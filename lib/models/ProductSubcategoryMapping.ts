@@ -17,9 +17,9 @@ import mongoose, { Schema, Document } from 'mongoose'
 import '@/lib/models/Subcategory'
 
 export interface IProductSubcategoryMapping extends Document {
-  productId: mongoose.Types.ObjectId // Reference to Product (REQUIRED)
-  subCategoryId: mongoose.Types.ObjectId // Reference to Subcategory (REQUIRED)
-  companyId: mongoose.Types.ObjectId // Reference to Company (REQUIRED)
+  productId: string // String ID reference to Product (6-digit numeric string) - REQUIRED
+  subCategoryId: string // String ID reference to Subcategory (6-digit numeric string) - REQUIRED
+  companyId: string // String ID reference to Company (6-digit numeric string) - REQUIRED
   companySpecificPrice?: number // Optional price override for this company
   createdAt?: Date
   updatedAt?: Date
@@ -28,22 +28,34 @@ export interface IProductSubcategoryMapping extends Document {
 const ProductSubcategoryMappingSchema = new Schema<IProductSubcategoryMapping>(
   {
     productId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Uniform',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Product ID must be a 6-digit numeric string (e.g., "200001")'
+      }
     },
     subCategoryId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Subcategory',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Subcategory ID must be a 6-digit numeric string (e.g., "600001")'
+      }
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     companySpecificPrice: {
       type: Number,
@@ -73,7 +85,7 @@ ProductSubcategoryMappingSchema.pre('save', async function(next) {
     if (this.isModified('subCategoryId') || this.isModified('companyId') || this.isNew) {
       // Use the imported Subcategory model to ensure consistency
       const Subcategory = mongoose.models.Subcategory || mongoose.model('Subcategory')
-      const subcategory = await Subcategory.findById(this.subCategoryId).lean()
+      const subcategory = await Subcategory.findOne({ id: String(this.subCategoryId) }).lean()
       
       if (!subcategory) {
         console.error('[ProductSubcategoryMapping pre-save] Subcategory not found:', {

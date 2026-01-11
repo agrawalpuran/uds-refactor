@@ -11,7 +11,14 @@ import { isCompanyAdmin } from '@/lib/db/data-access'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const {
       client_indent_number,
       indent_date,
@@ -28,17 +35,16 @@ export async function POST(request: Request) {
         { error: 'Missing required fields' },
         { status: 400 }
       )
-    }
 
     // Authorization check (only Company Admin or Site Admin can create indents)
     if (created_by_role === 'COMPANY_ADMIN' && adminEmail) {
       const isAdmin = await isCompanyAdmin(adminEmail, companyId)
-      if (!isAdmin) {
+    }
+    if (!isAdmin) {
         return NextResponse.json(
           { error: 'Unauthorized: Only Company Admins can create indents' },
           { status: 403 }
         )
-      }
     }
 
     const indent = await createIndentHeader({
@@ -53,11 +59,39 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, indent }, { status: 201 })
   } catch (error: any) {
     console.error('Error creating indent:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 403 for authorization errors
+    if (errorMessage.includes('Unauthorized') || errorMessage.includes('Forbidden')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 403 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to create indent' },
+      { error: errorMessage },
       { status: 500 }
     )
-  }
 }
 
 export async function GET(request: Request) {
@@ -70,16 +104,15 @@ export async function GET(request: Request) {
         { error: 'indentId is required' },
         { status: 400 }
       )
-    }
 
     const indent = await getIndentById(indentId)
     
+    }
     if (!indent) {
       return NextResponse.json(
         { error: 'Indent not found' },
         { status: 404 }
       )
-    }
 
     // Get vendor indents
     const vendorIndents = await getVendorIndentsByIndentId(indentId)
@@ -91,10 +124,30 @@ export async function GET(request: Request) {
     })
   } catch (error: any) {
     console.error('Error fetching indent:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch indent' },
+      { error: errorMessage },
       { status: 500 }
     )
-  }
 }
 

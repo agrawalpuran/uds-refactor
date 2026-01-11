@@ -4,13 +4,13 @@ export interface IUniform extends Document {
   id: string
   name: string
   category: 'shirt' | 'pant' | 'shoe' | 'jacket' | 'accessory' // Legacy field - kept for backward compatibility
-  categoryId?: mongoose.Types.ObjectId // New field - reference to ProductCategory
+  categoryId?: string // String ID reference to ProductCategory (6-digit numeric string)
   gender: 'male' | 'female' | 'unisex'
   sizes: string[]
   price: number
   image: string
   sku: string
-  companyIds: mongoose.Types.ObjectId[]
+  companyIds: string[] // Array of string IDs referencing Companies (6-digit numeric strings)
   // Optional SKU attributes (exactly 3)
   attribute1_name?: string
   attribute1_value?: string | number
@@ -47,10 +47,15 @@ const UniformSchema = new Schema<IUniform>(
       required: false, // Made optional to support migration to categoryId
     },
     categoryId: {
-      type: Schema.Types.ObjectId,
-      ref: 'ProductCategory',
+      type: String,
       required: false,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits if provided
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Category ID must be a 6-digit numeric string (e.g., "700001")'
+      }
     },
     gender: {
       type: String,
@@ -75,9 +80,15 @@ const UniformSchema = new Schema<IUniform>(
       unique: true,
     },
     companyIds: {
-      type: [Schema.Types.ObjectId],
-      ref: 'Company',
+      type: [String],
       default: [],
+      validate: {
+        validator: function(v: string[]) {
+          // All IDs must be exactly 6 digits
+          return v.every(id => /^\d{6}$/.test(id))
+        },
+        message: 'All company IDs must be 6-digit numeric strings (e.g., "100001")'
+      }
     },
     // Optional SKU attributes (exactly 3)
     attribute1_name: {

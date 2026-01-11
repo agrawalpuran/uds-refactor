@@ -33,6 +33,9 @@ export async function GET(request: Request) {
     const pendingApprovalCount = searchParams.get('pendingApprovalCount')
     const pendingSiteAdminApprovals = searchParams.get('pendingSiteAdminApprovals')
     const adminEmail = searchParams.get('adminEmail')
+    
+    // Note: Most query parameters are optional, so we don't validate them here
+    // Routes that require specific params will validate them individually
 
     // Get pending site admin approvals
     if (pendingSiteAdminApprovals === 'true' && adminEmail) {
@@ -43,7 +46,6 @@ export async function GET(request: Request) {
       const toDate = toDateParam ? new Date(toDateParam) : undefined
       const orders = await getPendingApprovalsForSiteAdmin(adminEmail, fromDate, toDate)
       return NextResponse.json(orders)
-    }
 
     // Get approved PRs for site admin
     const approvedPRs = searchParams.get('approvedPRs')
@@ -55,7 +57,6 @@ export async function GET(request: Request) {
       const toDate = toDateParam ? new Date(toDateParam) : undefined
       const orders = await getApprovedPRsForSiteAdmin(adminEmail, fromDate, toDate)
       return NextResponse.json(orders)
-    }
 
     // Get all PRs for site admin (historical view - all statuses)
     const allPRsForSiteAdmin = searchParams.get('allPRsForSiteAdmin')
@@ -67,7 +68,6 @@ export async function GET(request: Request) {
       const toDate = toDateParam ? new Date(toDateParam) : undefined
       const orders = await getAllPRsForSiteAdmin(adminEmail, fromDate, toDate)
       return NextResponse.json(orders)
-    }
 
     // Get approved orders for company admin
     const approvedCompanyAdmin = searchParams.get('approvedCompanyAdmin')
@@ -75,7 +75,6 @@ export async function GET(request: Request) {
       const { getApprovedOrdersForCompanyAdmin } = await import('@/lib/db/data-access')
       const orders = await getApprovedOrdersForCompanyAdmin(companyId)
       return NextResponse.json(orders)
-    }
 
     // Get PO created orders for company admin
     const poCreatedCompanyAdmin = searchParams.get('poCreatedCompanyAdmin')
@@ -83,48 +82,41 @@ export async function GET(request: Request) {
       const { getPOCreatedOrdersForCompanyAdmin } = await import('@/lib/db/data-access')
       const orders = await getPOCreatedOrdersForCompanyAdmin(companyId)
       return NextResponse.json(orders)
-    }
 
     // Get pending approval count
     if (pendingApprovalCount === 'true' && companyId) {
       const count = await getPendingApprovalCount(companyId)
       return NextResponse.json({ count })
-    }
 
     // Get pending approvals
     if (pendingApprovals === 'true' && companyId) {
       const orders = await getPendingApprovals(companyId)
       return NextResponse.json(orders)
-    }
 
     // Return consumed eligibility for an employee
     if (consumedEligibility === 'true' && employeeId) {
       const consumed = await getConsumedEligibility(employeeId)
       return NextResponse.json(consumed)
-    }
 
     // Get orders by location (for Location Admin)
     if (locationId) {
       const orders = await getOrdersByLocation(locationId)
       return NextResponse.json(orders)
-    }
 
     // Get orders by vendor (for vendor dashboard)
     if (vendorId) {
       const orders = await getOrdersByVendor(vendorId)
       return NextResponse.json(orders)
-    }
 
     if (companyId) {
       const orders = await getOrdersByCompany(companyId)
       return NextResponse.json(orders)
-    }
 
     if (employeeId) {
       const orders = await getOrdersByEmployee(employeeId)
       return NextResponse.json(orders)
-    }
 
+    }
     const orders = await getAllOrders()
     return NextResponse.json(orders)
   } catch (error: any) {
@@ -134,18 +126,32 @@ export async function GET(request: Request) {
     const errorMessage = error.message || 'Unknown error occurred'
     const isConnectionError = errorMessage.includes('Mongo') || errorMessage.includes('connection')
     
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || errorMessage.includes('Not found') || errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
     return NextResponse.json({ 
       error: errorMessage,
       type: isConnectionError ? 'database_connection_error' : 'api_error',
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     }, { status: 500 })
-  }
 }
 
 export async function POST(request: Request) {
+  try {
+
   let body: any = null
   try {
-    body = await request.json()
+    // Parse JSON body with error handling
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({ 
+        error: 'Invalid JSON in request body' 
+      }, { status: 400 })
     const { action, orderId, orderIds, adminEmail, status } = body
 
     // Bulk approve orders
@@ -165,7 +171,6 @@ export async function POST(request: Request) {
       
       const result = await bulkApproveOrders(orderIds, adminEmail, prDataMap.size > 0 ? prDataMap : undefined)
       return NextResponse.json(result, { status: 200 })
-    }
 
     // Approve order
     if (action === 'approve' && orderId && adminEmail) {
@@ -173,13 +178,13 @@ export async function POST(request: Request) {
       const prDate = body.prDate ? new Date(body.prDate) : undefined // Optional PR date from site admin
       const order = await approveOrder(orderId, adminEmail, prNumber, prDate)
       return NextResponse.json(order, { status: 200 })
-    }
 
     // Update order status
     if (action === 'updateStatus' && orderId && status) {
-      const vendorId = body.vendorId // CRITICAL SECURITY: Extract vendorId from request for authorization
+    }
+    const vendorId = body.vendorId // CRITICAL SECURITY: Extract vendorId from request for authorization
       console.log(`[API] 📦 updateOrderStatus called: orderId=${orderId}, status=${status}, vendorId=${vendorId || 'N/A'}`)
-      console.log(`[API] 📦 Request timestamp: ${new Date().toISOString()}`)
+      console.log(`[API] 📦 Request timestamp: ${new Date().toISOString()`)
       
       // CRITICAL SECURITY: If vendorId is provided, validate authorization
       // This ensures vendors can ONLY update orders that belong to them
@@ -194,7 +199,7 @@ export async function POST(request: Request) {
         const order = await updateOrderStatus(orderId, status, vendorId)
         console.log(`[API] ✅ updateOrderStatus completed successfully for orderId=${orderId}`)
         return NextResponse.json(order, { status: 200 })
-      } catch (error: any) {
+  } catch (error: any) {
         console.error(`[API] ❌ updateOrderStatus failed for orderId=${orderId}:`, error)
         console.error(`[API] ❌ Error details:`, {
           message: error?.message,
@@ -208,7 +213,6 @@ export async function POST(request: Request) {
             error: error.message,
             type: 'authorization_error'
           }, { status: 403 })
-        }
         
         throw error
       }
@@ -265,5 +269,42 @@ export async function POST(request: Request) {
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     }, { status: statusCode })
   }
-}
+
+  } catch (error: any) {
+    console.error(`[API] Error in POST handler:`, error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 

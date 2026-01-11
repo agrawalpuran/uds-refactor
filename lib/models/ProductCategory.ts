@@ -3,7 +3,7 @@ import mongoose, { Schema, Document } from 'mongoose'
 export interface IProductCategory extends Document {
   id: string // Unique 6-digit ID (e.g., "500001")
   name: string // Category name (e.g., "Shirt", "Trouser", "Shoe", "Custom Category")
-  companyId: mongoose.Types.ObjectId // Company that owns this category
+  companyId: string // String ID reference to Company (6-digit numeric string)
   renewalUnit: 'months' | 'years' // Default renewal unit for this category
   isSystemCategory?: boolean // True for system categories (shirt, pant, shoe, jacket, accessory)
   status: 'active' | 'inactive'
@@ -31,10 +31,14 @@ const ProductCategorySchema = new Schema<IProductCategory>(
       trim: true,
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     renewalUnit: {
       type: String,

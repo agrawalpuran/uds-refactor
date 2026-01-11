@@ -2,8 +2,8 @@ import mongoose, { Schema, Document } from 'mongoose'
 
 // Product-Company relationship (many-to-many)
 export interface IProductCompany extends Document {
-  productId: mongoose.Types.ObjectId
-  companyId: mongoose.Types.ObjectId
+  productId: string // String ID reference to Uniform/Product (6-digit numeric string)
+  companyId: string // String ID reference to Company (6-digit numeric string)
   createdAt?: Date
   updatedAt?: Date
 }
@@ -13,14 +13,24 @@ const ProductCompanySchema = new Schema<IProductCompany>(
     // Note: productId and companyId don't need index: true because they're the first fields in compound indexes below
     // MongoDB can use compound indexes for queries on just productId or companyId
     productId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Uniform',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Product ID must be a 6-digit numeric string (e.g., "200001")'
+      }
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
   },
   {
@@ -36,8 +46,8 @@ ProductCompanySchema.index({ productId: 1, companyId: 1 }, { unique: true })
 // This stores which vendor supplies which product
 // Company access is validated via ProductCompany relationships
 export interface IProductVendor extends Document {
-  productId: mongoose.Types.ObjectId
-  vendorId: mongoose.Types.ObjectId
+  productId: string // String ID reference to Uniform/Product (6-digit numeric string)
+  vendorId: string // String ID reference to Vendor (6-digit numeric string)
   createdAt?: Date
   updatedAt?: Date
 }
@@ -47,14 +57,24 @@ const ProductVendorSchema = new Schema<IProductVendor>(
     // Note: productId and vendorId don't need index: true because they're the first fields in compound indexes below
     // MongoDB can use compound indexes for queries on just productId or vendorId
     productId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Uniform',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Product ID must be a 6-digit numeric string (e.g., "200001")'
+      }
     },
     vendorId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Vendor',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
   },
   {
@@ -68,8 +88,8 @@ ProductVendorSchema.index({ productId: 1, vendorId: 1 }, { unique: true })
 
 // Vendor-Company relationship (many-to-many)
 export interface IVendorCompany extends Document {
-  vendorId: mongoose.Types.ObjectId
-  companyId: mongoose.Types.ObjectId
+  vendorId: string // String ID reference to Vendor (6-digit numeric string)
+  companyId: string // String ID reference to Company (6-digit numeric string)
   createdAt?: Date
   updatedAt?: Date
 }
@@ -79,14 +99,24 @@ const VendorCompanySchema = new Schema<IVendorCompany>(
     // Note: vendorId and companyId don't need index: true because they're the first fields in compound indexes below
     // MongoDB can use compound indexes for queries on just vendorId or companyId
     vendorId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Vendor',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
   },
   {

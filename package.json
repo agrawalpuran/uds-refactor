@@ -62,7 +62,14 @@
     "diagnose-shipments": "node scripts/diagnose-shipment-id-mismatches.js",
     "fix-shipments": "node scripts/diagnose-shipment-id-mismatches.js --fix",
     "reindex": "node scripts/sync-mongoose-indexes.js",
-    "reindex-force": "node scripts/sync-mongoose-indexes.js --force"
+    "reindex-force": "node scripts/sync-mongoose-indexes.js --force",
+    "diagnose-companyid": "node scripts/diagnose-companyid-conversion.js",
+    "fix-company-ids": "node scripts/fix-company-ids.js",
+    "fix-employee-companyid": "node scripts/fix-employee-companyid.js",
+    "test:api": "node scripts/run-api-tests.js",
+    "test:api:generate": "node scripts/generate-api-tests.js",
+    "test:api:map": "node scripts/generate-api-route-map.js",
+    "validate:string-ids": "node scripts/validate-string-ids.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -84,6 +91,7 @@
     "@types/react": "^19.2.4",
     "@types/react-dom": "^19.2.3",
     "baseline-browser-mapping": "^2.9.11",
+    "glob": "^13.0.0",
     "pptxgenjs": "^4.0.1",
     "tsx": "^4.21.0",
     "typescript": "^5.2.2"

@@ -3,12 +3,12 @@ import mongoose, { Schema, Document } from 'mongoose'
 export interface IProductFeedback extends Document {
   orderId: string // Order ID reference
   productId: string // Product/Uniform ID
-  uniformId?: mongoose.Types.ObjectId // Reference to Uniform model
-  employeeId: mongoose.Types.ObjectId // Employee who submitted feedback
+  uniformId?: string // String ID reference to Uniform (6-digit numeric string)
+  employeeId: string // String ID reference to Employee (6-digit numeric string)
   employeeIdNum: string // Numeric employee ID for correlation
-  companyId: mongoose.Types.ObjectId // Company ID
+  companyId: string // String ID reference to Company (6-digit numeric string)
   companyIdNum: number // Numeric company ID for correlation
-  vendorId?: mongoose.Types.ObjectId // Vendor ID (from order)
+  vendorId?: string // String ID reference to Vendor (6-digit numeric string)
   rating: number // Rating from 1 to 5
   comment?: string // Optional feedback comment
   viewedBy?: string[] // Array of admin emails who have viewed this feedback
@@ -30,15 +30,24 @@ const ProductFeedbackSchema = new Schema<IProductFeedback>(
       // Index created via compound index below - don't use index: true here
     },
     uniformId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Uniform',
-      index: true,
+      type: String,
+      required: false,
+      validate: {
+        validator: function(v: string) {
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Uniform ID must be a 6-digit numeric string (e.g., "200001")'
+      }
     },
     employeeId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Employee ID must be a 6-digit numeric string (e.g., "300001")'
+      }
     },
     employeeIdNum: {
       type: String,
@@ -46,10 +55,14 @@ const ProductFeedbackSchema = new Schema<IProductFeedback>(
       index: true,
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     companyIdNum: {
       type: Number,
@@ -57,9 +70,14 @@ const ProductFeedbackSchema = new Schema<IProductFeedback>(
       index: true,
     },
     vendorId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Vendor',
-      index: true,
+      type: String,
+      required: false,
+      validate: {
+        validator: function(v: string) {
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     rating: {
       type: Number,

@@ -13,18 +13,16 @@ export async function GET(request: Request) {
     
     if (!vendorId) {
       return NextResponse.json({ error: 'vendorId is required' }, { status: 400 })
-    }
     
+    }
     if (!mongoose.connection.db) {
       return NextResponse.json(
         { error: 'Database connection not available' },
         { status: 500 }
       )
-    }
     const db = mongoose.connection.db
     if (!db) {
       return NextResponse.json({ error: 'Database connection not available' }, { status: 500 })
-    }
     
     console.log(`[DEBUG API] Starting debug for vendorId: ${vendorId}`)
     
@@ -37,7 +35,6 @@ export async function GET(request: Request) {
     const vendor = await db.collection('vendors').findOne({ id: vendorId })
     if (!vendor) {
       return NextResponse.json({ error: 'Vendor not found', debugInfo }, { status: 404 })
-    }
     
     debugInfo.vendor = {
       name: vendor.name,
@@ -171,10 +168,42 @@ export async function GET(request: Request) {
     })
   } catch (error: any) {
     console.error('[DEBUG API] Error:', error)
-    return NextResponse.json({ 
-      error: error.message || 'Unknown error',
-      stack: error.stack 
-    }, { status: 500 })
-  }
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 

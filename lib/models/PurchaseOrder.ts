@@ -2,12 +2,12 @@ import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IPurchaseOrder extends Document {
   id: string // Unique identifier (numeric/string)
-  companyId: mongoose.Types.ObjectId // FK to Company
+  companyId: string // String ID reference to Company (6-digit numeric string)
   vendorId: string // Vendor numeric ID (6-digit string, e.g., "100001")
   client_po_number: string // Client/customer generated PO number (NOT unique - can repeat)
   po_date: Date // Date PO was created
   po_status: 'CREATED' | 'SENT_TO_VENDOR' | 'ACKNOWLEDGED' | 'IN_FULFILMENT' | 'COMPLETED' | 'CANCELLED' // PO status
-  created_by_user_id: mongoose.Types.ObjectId // User who created the PO (ref: Employee)
+  created_by_user_id: string // String ID reference to Employee (6-digit numeric string)
   createdAt?: Date
   updatedAt?: Date
 }
@@ -21,10 +21,14 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
       index: true,
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     vendorId: {
       type: String,
@@ -59,10 +63,14 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
       index: true,
     },
     created_by_user_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'User ID must be a 6-digit numeric string (e.g., "300001")'
+      }
     },
   },
   {

@@ -25,7 +25,14 @@ export async function PUT(
 ) {
   try {
     const { shipmentId } = await params
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
 
     await connectDB()
 
@@ -38,15 +45,14 @@ export async function PUT(
         { error: `Shipment ${shipmentId} not found` },
         { status: 404 }
       )
-    }
 
     // Verify shipment record is valid
+    }
     if (!shipment.shipmentMode) {
       return NextResponse.json(
         { error: 'Invalid shipment record' },
         { status: 400 }
       )
-    }
 
     // ====================================================
     // ELIGIBILITY VALIDATION
@@ -61,9 +67,9 @@ export async function PUT(
         },
         { status: 400 }
       )
-    }
 
     // Rule 2: providerShipmentReference MUST exist for API shipments
+    }
     if (!shipment.providerShipmentReference || !shipment.providerShipmentReference.trim()) {
       console.error(`[API /shipments/${shipmentId}/pickup/reschedule] ❌ CRITICAL: providerShipmentReference missing`)
       console.error(`[API /shipments/${shipmentId}/pickup/reschedule] Internal shipmentId: ${shipmentId}`)
@@ -77,7 +83,6 @@ export async function PUT(
         },
         { status: 400 }
       )
-    }
 
     // Rule 3: AWB number must exist
     const awbNumber = shipment.courierAwbNumber || shipment.trackingNumber
@@ -89,7 +94,6 @@ export async function PUT(
         },
         { status: 400 }
       )
-    }
 
     // Rule 4: Existing pickup must exist
     const existingPickup = await ShipmentPickup.findOne({ shipmentId })
@@ -104,9 +108,9 @@ export async function PUT(
         },
         { status: 400 }
       )
-    }
 
     // Rule 5: Pickup must NOT be PICKED_UP
+    }
     if (existingPickup.pickupStatus === 'PICKED_UP') {
       return NextResponse.json(
         { 
@@ -115,7 +119,6 @@ export async function PUT(
         },
         { status: 400 }
       )
-    }
 
     // Rule 6: Pickup reference ID must exist
     if (!existingPickup.pickupReferenceId) {
@@ -126,12 +129,12 @@ export async function PUT(
         },
         { status: 400 }
       )
-    }
 
     // ====================================================
     // PHONE VALIDATION (BEFORE API CALL)
     // ====================================================
     const phoneValidation = validateAndNormalizePhone(body.contactPhone, false)
+    }
     if (!phoneValidation.isValid) {
       return NextResponse.json(
         { 
@@ -140,7 +143,6 @@ export async function PUT(
         },
         { status: 400 }
       )
-    }
     const normalizedPhone = phoneValidation.normalizedPhone!
 
     // ====================================================
@@ -152,8 +154,8 @@ export async function PUT(
         { error: 'warehouseId is required' },
         { status: 400 }
       )
-    }
 
+    }
     const warehouse = await VendorWarehouse.findOne({ 
       warehouseRefId: warehouseId,
       vendorId: shipment.vendorId,
@@ -164,17 +166,16 @@ export async function PUT(
         { error: `Warehouse ${warehouseId} not found` },
         { status: 404 }
       )
-    }
 
     // ====================================================
     // CREATE PROVIDER INSTANCE
     // ====================================================
+    }
     if (!shipment.providerId) {
       return NextResponse.json(
         { error: 'Provider ID not found in shipment' },
         { status: 400 }
       )
-    }
 
     const provider = await createProvider(
       shipment.providerId,
@@ -187,15 +188,14 @@ export async function PUT(
         { error: 'Failed to initialize shipping provider' },
         { status: 500 }
       )
-    }
 
     // Check if provider supports pickup rescheduling
+    }
     if (!provider.reschedulePickup) {
       return NextResponse.json(
         { error: 'Pickup rescheduling is not supported by this provider' },
         { status: 400 }
       )
-    }
 
     // ====================================================
     // BUILD PICKUP PAYLOAD
@@ -261,7 +261,6 @@ export async function PUT(
         },
         { status: 500 }
       )
-    }
 
     // Additional validation: Ensure pickupReferenceId exists
     if (!pickupResult.pickupReferenceId || !pickupResult.pickupReferenceId.trim()) {
@@ -279,7 +278,6 @@ export async function PUT(
         },
         { status: 500 }
       )
-    }
 
     // ====================================================
     // CREATE NEW PICKUP RECORD (ONLY after Shiprocket confirms success)
@@ -324,14 +322,42 @@ export async function PUT(
       pickupStatus: 'RESCHEDULED',
       message: pickupResult.message || 'Pickup rescheduled successfully',
     }, { status: 200 })
-
   } catch (error: any) {
     console.error('[API /shipments/[shipmentId]/pickup/reschedule] Error:', error)
+    console.error('[API /shipments/[shipmentId]/pickup/reschedule] Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Failed to reschedule pickup',
-        type: 'api_error',
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

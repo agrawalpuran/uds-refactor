@@ -19,11 +19,11 @@ export interface IReturnRequest extends Document {
   originalOrderId: string // Reference to original order ID
   originalOrderItemIndex: number // Index of item in original order.items array
   productId: string // SKU/productId (must match original)
-  uniformId: mongoose.Types.ObjectId // Reference to Uniform
+  uniformId: string // String ID reference to Uniform (6-digit numeric string)
   uniformName: string // Product name
-  employeeId: mongoose.Types.ObjectId // Reference to Employee
+  employeeId: string // String ID reference to Employee (6-digit numeric string)
   employeeIdNum: string // Employee ID for correlation
-  companyId: mongoose.Types.ObjectId // Reference to Company
+  companyId: string // String ID reference to Company (6-digit numeric string)
   requestedQty: number // Quantity to replace (≤ delivered quantity)
   originalSize: string // Size from original order
   requestedSize: string // New size (can be same or different)
@@ -69,19 +69,28 @@ const ReturnRequestSchema = new Schema<IReturnRequest>(
       // Index created via compound index below - don't use index: true here
     },
     uniformId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Uniform',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Uniform ID must be a 6-digit numeric string (e.g., "200001")'
+      }
     },
     uniformName: {
       type: String,
       required: true,
     },
     employeeId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Employee ID must be a 6-digit numeric string (e.g., "300001")'
+      }
     },
     employeeIdNum: {
       type: String,
@@ -89,10 +98,14 @@ const ReturnRequestSchema = new Schema<IReturnRequest>(
       index: true,
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     requestedQty: {
       type: Number,

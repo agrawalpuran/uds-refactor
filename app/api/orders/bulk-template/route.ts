@@ -36,28 +36,24 @@ export async function GET(request: NextRequest) {
         { error: 'Company ID is required' },
         { status: 400 }
       )
-    }
 
+    }
     if (!adminEmail) {
       return NextResponse.json(
         { error: 'Admin email is required' },
         { status: 400 }
       )
-    }
 
-    // Verify company exists
-    let company = await Company.findOne({ id: companyId })
-    if (!company && mongoose.Types.ObjectId.isValid(companyId)) {
-      company = await Company.findById(companyId)
-    }
+    // Verify company exists - use string ID only
+    const company = await Company.findOne({ id: companyId })
     if (!company) {
       return NextResponse.json(
         { error: 'Company not found' },
         { status: 404 }
       )
-    }
 
     // Verify admin access (Company Admin only for this feature)
+    }
     const { isCompanyAdmin } = await import('@/lib/db/data-access')
     const isAdmin = await isCompanyAdmin(adminEmail, companyId)
     if (!isAdmin) {
@@ -65,12 +61,12 @@ export async function GET(request: NextRequest) {
         { error: 'Unauthorized: Only Company Admins can download bulk order templates' },
         { status: 403 }
       )
-    }
 
     // ============================================================
     // SHEET 1: EMPLOYEE REFERENCE (READ-ONLY)
     // ============================================================
-    const employees = await Employee.find({ companyId: company._id, status: 'active' })
+    }
+    const employees = await Employee.find({ companyId: company.id, status: 'active' })
       .select('employeeId id firstName lastName designation location')
       .lean()
 
@@ -106,7 +102,7 @@ export async function GET(request: NextRequest) {
     // Get all products available via subcategory eligibility
     // ============================================================
     // Get all unique designations for the company
-    const allEmployees = await Employee.find({ companyId: company._id, status: 'active' })
+    const allEmployees = await Employee.find({ companyId: company.id, status: 'active' })
       .select('designation gender')
       .lean()
 
@@ -143,7 +139,7 @@ export async function GET(request: NextRequest) {
 
     // Get all active subcategory eligibilities for this company
     const allEligibilities = await DesignationSubcategoryEligibility.find({
-      companyId: company._id,
+      companyId: company.id,
       status: 'active'
     })
       .populate('subCategoryId', 'id name parentCategoryId')
@@ -151,7 +147,8 @@ export async function GET(request: NextRequest) {
 
     const eligibleSubcategoryIds = new Set<string>()
     allEligibilities.forEach((elig: any) => {
-      const subcatId = elig.subCategoryId?._id?.toString() || elig.subCategoryId?.toString()
+      // Use string ID from subcategory
+      const subcatId = elig.subCategoryId?.id || String(elig.subCategoryId)
       if (subcatId) {
         eligibleSubcategoryIds.add(subcatId)
       }
@@ -159,28 +156,26 @@ export async function GET(request: NextRequest) {
 
     // Get all product-subcategory mappings for eligible subcategories
     if (eligibleSubcategoryIds.size > 0) {
-      const subcategoryObjectIds = Array.from(eligibleSubcategoryIds)
-        .filter(id => mongoose.Types.ObjectId.isValid(id))
-        .map(id => new mongoose.Types.ObjectId(id))
-
       const productMappings = await ProductSubcategoryMapping.find({
-        subCategoryId: { $in: subcategoryObjectIds },
-        companyId: company._id
+        subCategoryId: { $in: Array.from(eligibleSubcategoryIds) },
+        companyId: company.id
       })
         .populate('productId', 'id name sku vendorId')
         .populate('subCategoryId', 'id name')
         .lean()
 
-      // Get all unique product IDs to fetch vendor info
-      const productObjectIds = productMappings
-        .map((m: any) => m.productId?._id || m.productId)
-        .filter(Boolean)
-        .filter((id: any) => mongoose.Types.ObjectId.isValid(id))
-        .map((id: any) => new mongoose.Types.ObjectId(id))
+      // Get all unique product string IDs to fetch vendor info
+      const productIds = new Set<string>()
+      productMappings.forEach((m: any) => {
+        const productId = m.productId?.id || String(m.productId)
+        if (productId) {
+          productIds.add(productId)
+        }
+      })
 
-      // Fetch products with vendor info
+      // Fetch products with vendor info using string IDs
       const products = await Uniform.find({
-        _id: { $in: productObjectIds }
+        id: { $in: Array.from(productIds) }
       })
         .populate('vendorId', 'id name')
         .lean()
@@ -188,7 +183,7 @@ export async function GET(request: NextRequest) {
       // Create a map of productId -> vendor name
       const productVendorMap = new Map<string, string>()
       products.forEach((p: any) => {
-        const productId = p._id?.toString()
+        const productId = p.id
         const vendorName = p.vendorId?.name || 'N/A'
         if (productId) {
           productVendorMap.set(productId, vendorName)
@@ -196,18 +191,15 @@ export async function GET(request: NextRequest) {
       })
 
       productMappings.forEach((mapping: any) => {
-        // Use readable product ID (id field) instead of _id
-        const productObjectId = mapping.productId?._id?.toString() || mapping.productId?.toString()
-        const productReadableId = mapping.productId?.id || productObjectId // Prefer readable id field
+        // Use string product ID
+        const productReadableId = mapping.productId?.id || String(mapping.productId)
         const productName = mapping.productId?.name || 'Unknown'
         const productSku = mapping.productId?.sku || 'N/A'
         const subcategoryName = mapping.subCategoryId?.name || 'Unknown'
-        const vendorName = productVendorMap.get(productObjectId) || 'N/A'
+        const vendorName = productVendorMap.get(productReadableId) || 'N/A'
 
         // Get product from products array to get sizes
-        const product = products.find((p: any) => 
-          p._id?.toString() === productObjectId || p.id === productReadableId
-        )
+        const product = products.find((p: any) => p.id === productReadableId)
         const supportedSizes = product?.sizes || []
 
         if (productReadableId) {
@@ -273,13 +265,45 @@ export async function GET(request: NextRequest) {
     return new NextResponse(excelBuffer, {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Content-Disposition': `attachment; filename="bulk_order_template_${companyId}_${Date.now()}.xlsx"`
+        'Content-Disposition': `attachment; filename="bulk_order_template_${companyId}_${Date.now().xlsx"`
       }
     })
   } catch (error: any) {
     console.error('Error generating bulk order template:', error)
+    console.error('Error generating bulk order template:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to generate template' },
+      { error: errorMessage },
       { status: 500 }
     )
   }

@@ -22,28 +22,22 @@ export async function GET(
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get('limit') || '10')
 
-    // Find branch
-    let branch
-    if (mongoose.Types.ObjectId.isValid(branchId)) {
-      branch = await Branch.findById(branchId)
-    } else {
-      branch = await Branch.findOne({ id: branchId })
-    }
-
+    // Find branch - use string ID
+    const branch = await Branch.findOne({ id: branchId })
     if (!branch) {
       return NextResponse.json(
         { error: `Branch not found: ${branchId}` },
         { status: 404 }
       )
+
+    const branchIdStr = branch.id
+
+    // Find employees for the branch - use string IDs
     }
-
-    const branchObjectId = branch._id
-
-    // Find employees for the branch
     const employees = await Employee.find({
       $or: [
-        { locationId: branchObjectId },
-        { branchId: branchObjectId },
+        { locationId: branchIdStr },
+        { branchId: branchIdStr },
       ],
       status: 'active'
     })
@@ -54,11 +48,43 @@ export async function GET(
     return NextResponse.json(employees)
   } catch (error: any) {
     console.error('API Error in /api/branches/[branchId]/employees GET:', error)
+    console.error('API Error in /api/branches/[branchId]/employees GET:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    }
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    }
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    }
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error'
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

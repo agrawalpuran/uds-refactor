@@ -47,40 +47,49 @@ export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
     await connectDB()
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { orders, companyId, adminEmail } = body
 
     if (!orders || !Array.isArray(orders)) {
       return NextResponse.json({ error: 'Invalid orders data' }, { status: 400 })
-    }
 
     if (!companyId) {
       return NextResponse.json({ error: 'Company ID is required' }, { status: 400 })
-    }
 
+    }
     if (!adminEmail) {
       return NextResponse.json({ error: 'Admin email is required' }, { status: 400 })
-    }
 
     // Verify company exists
     const company = await Company.findOne({ id: companyId })
     if (!company) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 })
-    }
 
     // Check if user is Company Admin, Location Admin, or Branch Admin
     const isCompanyAdminUser = await isCompanyAdmin(adminEmail, companyId)
     const locationAdminLocation = await getLocationByAdminEmail(adminEmail)
+    }
+    if (!locationAdminLocation) {
+      return NextResponse.json({ error: 'Location not found' }, { status: 404 })
     const isLocationAdminUser = locationAdminLocation !== null
     const branchAdminBranch = await getBranchByAdminEmail(adminEmail)
+    if (!branchAdminBranch) {
+      return NextResponse.json({ error: 'Branch not found' }, { status: 404 })
     const isBranchAdminUser = branchAdminBranch !== null
 
     // Authorization: Must be either Company Admin, Location Admin, or Branch Admin
+    }
     if (!isCompanyAdminUser && !isLocationAdminUser && !isBranchAdminUser) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only Company Admins, Location Admins, or Branch Admins can bulk upload orders' 
       }, { status: 403 })
-    }
 
     // If Location Admin, get their location ID
     let locationAdminLocationId: string | null = null
@@ -94,8 +103,8 @@ export async function POST(request: Request) {
       branchAdminBranchId = branchAdminBranch.id || branchAdminBranch._id?.toString() || null
     }
 
-    // OPTIMIZATION: Pre-fetch all employees for company once (indexed query)
-    const companyEmployees = await Employee.find({ companyId: company._id })
+    // OPTIMIZATION: Pre-fetch all employees for company once (indexed query) - use string ID
+    const companyEmployees = await Employee.find({ companyId: company.id })
       .select('_id employeeId id companyId locationId branchId')
       .lean()
     
@@ -200,22 +209,21 @@ export async function POST(request: Request) {
           }
         }
 
-        // If Branch Admin, verify employee belongs to their branch
+        // If Branch Admin, verify employee belongs to their branch - use string IDs
         if (isBranchAdminUser && branchAdminBranchId) {
-          const employeeBranchId = (employee as any).branchId?.toString() || null
-          const branchAdminBranchObjectId = branchAdminBranch?._id?.toString() || null
+          const employeeBranchId = String((employee as any).branchId || '')
           
           // OPTIMIZATION: Check branchId directly from pre-fetched employee data first
-          if (employeeBranchId && employeeBranchId === branchAdminBranchObjectId) {
+          if (employeeBranchId && employeeBranchId === branchAdminBranchId) {
             // Employee belongs to branch - continue processing
           } else {
             // Fallback: query branch employees only if branchId doesn't match
             const branchEmployees = await getEmployeesByBranch(branchAdminBranchId)
             const branchEmployeeIds = new Set(branchEmployees.map((e: any) => 
-              e.employeeId || e.id || e._id?.toString()
+              e.employeeId || e.id
             ))
             
-            const employeeIdForCheck = (employee as any).employeeId || (employee as any).id || (employee as any)._id?.toString()
+            const employeeIdForCheck = (employee as any).employeeId || (employee as any).id
             
             if (!branchEmployeeIds.has(employeeIdForCheck)) {
               // Mark all rows for this employee as failed
@@ -288,7 +296,7 @@ export async function POST(request: Request) {
               size: row.size,
               quantity: row.quantity,
               status: 'failed',
-              error: `Invalid size ${row.size} for product ${row.sku}. Available sizes: ${product.sizes.join(', ')}`
+              error: `Invalid size ${row.size} for product ${row.sku}. Available sizes: ${product.sizes.join(', ')`
             })
             continue
           }
@@ -455,7 +463,42 @@ export async function POST(request: Request) {
     })
   } catch (error: any) {
     console.error('Bulk order API Error:', error)
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 

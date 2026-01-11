@@ -26,18 +26,17 @@ export async function GET(
         { error: 'packageId is required' },
         { status: 400 }
       )
-    }
 
     await connectDB()
 
     const package_ = await getShipmentPackageById(packageId)
 
+    }
     if (!package_) {
       return NextResponse.json(
         { error: 'Package not found' },
         { status: 404 }
       )
-    }
 
     return NextResponse.json({
       success: true,
@@ -45,12 +44,40 @@ export async function GET(
     }, { status: 200 })
   } catch (error: any) {
     console.error('[packages API] GET Error:', error)
+    console.error('[packages API] GET Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -67,7 +94,14 @@ export async function PUT(
   try {
     const resolvedParams = await params
     const { packageId } = resolvedParams
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { packageName, lengthCm, breadthCm, heightCm, volumetricDivisor, isActive } = body
 
     if (!packageId) {
@@ -75,39 +109,37 @@ export async function PUT(
         { error: 'packageId is required' },
         { status: 400 }
       )
-    }
 
     // Validation
+    }
     if (lengthCm !== undefined && lengthCm <= 0) {
       return NextResponse.json(
         { error: 'lengthCm must be a positive number' },
         { status: 400 }
       )
-    }
 
     if (breadthCm !== undefined && breadthCm <= 0) {
       return NextResponse.json(
         { error: 'breadthCm must be a positive number' },
         { status: 400 }
       )
-    }
 
+    }
     if (heightCm !== undefined && heightCm <= 0) {
       return NextResponse.json(
         { error: 'heightCm must be a positive number' },
         { status: 400 }
       )
-    }
 
     if (volumetricDivisor !== undefined && volumetricDivisor <= 0) {
       return NextResponse.json(
         { error: 'volumetricDivisor must be a positive number' },
         { status: 400 }
       )
-    }
 
     await connectDB()
 
+    }
     const package_ = await updateShipmentPackage(
       packageId,
       {
@@ -132,7 +164,6 @@ export async function PUT(
         { error: error.message },
         { status: 404 }
       )
-    }
     return NextResponse.json(
       {
         error: error.message || 'Unknown error occurred',
@@ -141,7 +172,6 @@ export async function PUT(
       },
       { status: 500 }
     )
-  }
 }
 
 /**
@@ -161,7 +191,6 @@ export async function DELETE(
         { error: 'packageId is required' },
         { status: 400 }
       )
-    }
 
     await connectDB()
 
@@ -178,7 +207,6 @@ export async function DELETE(
         { error: error.message },
         { status: 404 }
       )
-    }
     return NextResponse.json(
       {
         error: error.message || 'Unknown error occurred',
@@ -187,6 +215,5 @@ export async function DELETE(
       },
       { status: 500 }
     )
-  }
 }
 

@@ -11,7 +11,7 @@ import { encrypt, decrypt } from '../utils/encryption'
  */
 export interface INotificationSenderProfile extends Document {
   senderId: string // Numeric ID (6-12 digits, e.g., "800001")
-  companyId: mongoose.Types.ObjectId // Foreign key → Company._id
+  companyId: string // String ID reference to Company (6-digit numeric string)
   senderName: string // Display name for "From" field (e.g., "UDS Support")
   senderEmail: string // "From" email address
   replyToEmail?: string // Reply-To email address (nullable, defaults to senderEmail)
@@ -39,10 +39,14 @@ const NotificationSenderProfileSchema = new Schema<INotificationSenderProfile>(
       }
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     senderName: {
       type: String,

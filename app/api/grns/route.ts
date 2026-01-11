@@ -16,11 +16,49 @@ import '@/lib/models/Order'
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
+  try {
+
   return NextResponse.json(
     { error: 'GRN creation is now vendor-led. Please use /api/vendor/grns endpoint.' },
     { status: 400 }
   )
-}
+  } catch (error: any) {
+    console.error(`[API] Error in POST handler:`, error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 
 /**
  * GET /api/grns
@@ -43,7 +81,6 @@ export async function GET(request: Request) {
     if (raisedByVendors) {
       const grns = await getGRNsRaisedByVendors(companyId || undefined)
       return NextResponse.json(grns)
-    }
 
     // Standard query requires companyId
     if (!companyId) {
@@ -51,13 +88,13 @@ export async function GET(request: Request) {
         { error: 'Company ID is required' },
         { status: 400 }
       )
-    }
 
     // For standard queries, return GRNs raised by vendors for the company
     const grns = await getGRNsRaisedByVendors(companyId)
     
     // Apply optional filters
     let filteredGRNs = grns
+    }
     if (vendorId) {
       filteredGRNs = filteredGRNs.filter((g: any) => g.vendorId === vendorId)
     }
@@ -68,14 +105,32 @@ export async function GET(request: Request) {
     return NextResponse.json(filteredGRNs)
   } catch (error: any) {
     console.error('API Error in /api/grns GET:', error)
+    
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.name === 'MongoNetworkError'
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || errorMessage.includes('Not found') || errorMessage.includes('does not exist')) {
+      return NextResponse.json({ error: errorMessage }, { status: 404 })
+    
+    // Return 400 for validation errors
+    if (errorMessage.includes('required') || errorMessage.includes('invalid') || errorMessage.includes('missing')) {
+      return NextResponse.json({ error: errorMessage }, { status: 400 })
+    
+    // Return 503 for connection errors, 500 for server errors
     return NextResponse.json(
       {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error'
+        error: errorMessage,
+        type: isConnectionError ? 'database_connection_error' : 'api_error'
       },
-      { status: 500 }
+      { status: isConnectionError ? 503 : 500 }
     )
-  }
 }
 
 /**
@@ -85,9 +140,47 @@ export async function GET(request: Request) {
  * Use /api/company/grns/acknowledge for acknowledgment
  */
 export async function PUT(request: Request) {
+  try {
+
   return NextResponse.json(
     { error: 'GRN status updates are handled via approval/acknowledgment endpoints.' },
     { status: 400 }
   )
-}
+  } catch (error: any) {
+    console.error(`[API] Error in PUT handler:`, error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 

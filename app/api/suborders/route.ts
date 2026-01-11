@@ -13,7 +13,13 @@ import { getVendorById } from '@/lib/data-mongodb'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { order_id, vendor_id, vendor_indent_id } = body
 
     if (!order_id || !vendor_id) {
@@ -21,8 +27,8 @@ export async function POST(request: Request) {
         { error: 'order_id and vendor_id are required' },
         { status: 400 }
       )
-    }
 
+    }
     const suborder = await createOrderSuborder({
       order_id,
       vendor_id,
@@ -32,16 +38,44 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, suborder }, { status: 201 })
   } catch (error: any) {
     console.error('Error creating suborder:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to create suborder' },
+      { error: errorMessage },
       { status: 500 }
     )
-  }
 }
 
 export async function PATCH(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const {
       suborder_id,
       shipper_name,
@@ -56,10 +90,10 @@ export async function PATCH(request: Request) {
         { error: 'suborder_id is required' },
         { status: 400 }
       )
-    }
 
     // TODO: Add vendor authorization check if vendorId is provided
 
+    }
     const suborder = await updateSuborderShipping({
       suborder_id,
       shipper_name,
@@ -71,8 +105,40 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ success: true, suborder })
   } catch (error: any) {
     console.error('Error updating suborder:', error)
+    console.error('Error updating suborder:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to update suborder' },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -87,12 +153,11 @@ export async function GET(request: Request) {
     if (orderId) {
       const suborders = await getSubordersByOrderId(orderId)
       return NextResponse.json({ success: true, suborders })
-    }
 
     if (vendorId) {
-      const suborders = await getSubordersByVendorId(vendorId)
-      return NextResponse.json({ success: true, suborders })
     }
+    const suborders = await getSubordersByVendorId(vendorId)
+      return NextResponse.json({ success: true, suborders })
 
     return NextResponse.json(
       { error: 'orderId or vendorId is required' },
@@ -100,10 +165,30 @@ export async function GET(request: Request) {
     )
   } catch (error: any) {
     console.error('Error fetching suborders:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch suborders' },
+      { error: errorMessage },
       { status: 500 }
     )
-  }
 }
 

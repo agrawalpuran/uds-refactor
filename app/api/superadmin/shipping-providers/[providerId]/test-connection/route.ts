@@ -26,12 +26,19 @@ export async function POST(
         { error: 'providerId is required' },
         { status: 400 }
       )
-    }
 
     // Parse request body to get test credentials (if provided)
     let testCredentials: any = null
     try {
-      const body = await request.json()
+      // Parse JSON body with error handling
+    }
+    let body: any
+      try {
+        body = await request.json()
+      } catch (jsonError: any) {
+        return NextResponse.json({
+          error: 'Invalid JSON in request body'
+        }, { status: 400 })
       if (body.authConfig) {
         testCredentials = body.authConfig
       }
@@ -48,12 +55,12 @@ export async function POST(
         { error: 'Provider not found' },
         { status: 404 }
       )
-    }
 
     // Get provider with decrypted authConfig using providerRefId (internal use only)
     let provider = providerById
     let authConfig = testCredentials // Use test credentials if provided
     
+    }
     if (!authConfig && providerById.providerRefId) {
       try {
         provider = await getProviderWithAuth(providerById.providerRefId)
@@ -71,8 +78,8 @@ export async function POST(
         { error: 'Provider not found' },
         { status: 404 }
       )
-    }
 
+    }
     if (!authConfig) {
       return NextResponse.json(
         { 
@@ -81,7 +88,6 @@ export async function POST(
         },
         { status: 400 }
       )
-    }
 
     // Initialize provider with auth (from form or stored)
     let providerInstance
@@ -123,7 +129,6 @@ export async function POST(
         },
         { status: 500 }
       )
-    }
 
     // Perform health check
     let healthResult
@@ -149,7 +154,6 @@ export async function POST(
         },
         { status: 500 }
       )
-    }
 
     // Update health status
     await updateShipmentServiceProvider(
@@ -170,11 +174,40 @@ export async function POST(
     })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/shipping-providers/[providerId]/test-connection POST:', error)
+    console.error('API Error in /api/superadmin/shipping-providers/[providerId]/test-connection POST:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

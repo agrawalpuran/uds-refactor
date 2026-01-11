@@ -2,8 +2,8 @@ import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IVendorIndent extends Document {
   id: string
-  indent_id: mongoose.Types.ObjectId
-  vendor_id: mongoose.Types.ObjectId
+  indent_id: string // String ID reference to IndentHeader (6-digit numeric string)
+  vendor_id: string // String ID reference to Vendor (6-digit numeric string)
   status: 'CREATED' | 'DELIVERED' | 'GRN_SUBMITTED' | 'PAID'
   total_items: number
   total_quantity: number
@@ -20,16 +20,24 @@ const VendorIndentSchema = new Schema<IVendorIndent>(
       unique: true,
     },
     indent_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'IndentHeader',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Indent ID must be a 6-digit numeric string'
+      }
     },
     vendor_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'Vendor',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     status: {
       type: String,

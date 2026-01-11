@@ -2,9 +2,9 @@ import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IOrderSuborder extends Document {
   id: string
-  order_id: mongoose.Types.ObjectId
-  vendor_id: mongoose.Types.ObjectId
-  vendor_indent_id?: mongoose.Types.ObjectId
+  order_id: string // String ID reference to Order (6-digit numeric string)
+  vendor_id: string // String ID reference to Vendor (6-digit numeric string)
+  vendor_indent_id?: string // String ID reference to VendorIndent (6-digit numeric string)
   // Shipping & Tracking (AUTHORITATIVE HERE)
   shipper_name?: string
   consignment_number?: string
@@ -24,22 +24,34 @@ const OrderSuborderSchema = new Schema<IOrderSuborder>(
       unique: true,
     },
     order_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'Order',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Order ID must be a 6-digit numeric string'
+      }
     },
     vendor_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'Vendor',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     vendor_indent_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'VendorIndent',
+      type: String,
       required: false,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Vendor Indent ID must be a 6-digit numeric string'
+      }
     },
     // Shipping & Tracking Fields
     shipper_name: {

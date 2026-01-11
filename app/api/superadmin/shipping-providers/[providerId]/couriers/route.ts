@@ -22,15 +22,14 @@ export async function GET(
         { error: 'providerId is required' },
         { status: 400 }
       )
-    }
 
     const provider = await getShipmentServiceProviderById(providerId)
+    }
     if (!provider) {
       return NextResponse.json(
         { error: 'Provider not found' },
         { status: 404 }
       )
-    }
 
     return NextResponse.json({
       success: true,
@@ -39,11 +38,40 @@ export async function GET(
     })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/shipping-providers/[providerId]/couriers GET:', error)
+    console.error('API Error in /api/superadmin/shipping-providers/[providerId]/couriers GET:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -66,9 +94,16 @@ export async function PUT(
         { error: 'providerId is required' },
         { status: 400 }
       )
-    }
 
-    const body = await request.json()
+    // Parse JSON body with error handling
+    }
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({ 
+        error: 'Invalid JSON in request body' 
+      }, { status: 400 })
     const { couriers } = body
 
     if (!Array.isArray(couriers)) {
@@ -76,7 +111,6 @@ export async function PUT(
         { error: 'couriers must be an array' },
         { status: 400 }
       )
-    }
 
     // Get current provider to merge with existing couriers
     const currentProvider = await getShipmentServiceProviderById(providerId)
@@ -85,10 +119,10 @@ export async function PUT(
         { error: 'Provider not found' },
         { status: 404 }
       )
-    }
 
     // Merge couriers: Update existing by courierCode, add new ones
     const existingCouriers = currentProvider.supportedCouriers || []
+    }
     const courierMap = new Map<string, any>()
 
     // First, add all existing couriers to map
@@ -149,11 +183,40 @@ export async function PUT(
     })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/shipping-providers/[providerId]/couriers PUT:', error)
+    console.error('API Error in /api/superadmin/shipping-providers/[providerId]/couriers PUT:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

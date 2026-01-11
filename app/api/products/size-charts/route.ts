@@ -14,21 +14,53 @@ export async function GET(request: Request) {
         { error: 'productIds parameter is required' },
         { status: 400 }
       )
-    }
 
+    }
     const productIds = productIdsParam.split(',').filter(id => /^\d{6}$/.test(id))
 
     if (productIds.length === 0) {
       return NextResponse.json({}, { status: 200 })
-    }
 
+    }
     const sizeCharts = await getProductSizeCharts(productIds)
 
     return NextResponse.json(sizeCharts, { status: 200 })
   } catch (error: any) {
     console.error('Error fetching size charts:', error)
+    console.error('Error fetching size charts:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to fetch size charts' },
+      { error: errorMessage },
       { status: 500 }
     )
   }

@@ -4,10 +4,10 @@ export interface IIndentHeader extends Document {
   id: string
   client_indent_number: string // Unique per company
   indent_date: Date
-  companyId: mongoose.Types.ObjectId
-  site_id?: mongoose.Types.ObjectId // Optional site reference
+  companyId: string // String ID reference to Company (6-digit numeric string)
+  site_id?: string // String ID reference to Location (6-digit numeric string) - Optional
   status: 'CREATED' | 'ORDERED' | 'FULFILLED' | 'CLOSED'
-  created_by_user_id: mongoose.Types.ObjectId
+  created_by_user_id: string // String ID reference to Employee (6-digit numeric string)
   created_by_role: 'COMPANY_ADMIN' | 'SITE_ADMIN' | 'EMPLOYEE'
   createdAt?: Date
   updatedAt?: Date
@@ -32,16 +32,24 @@ const IndentHeaderSchema = new Schema<IIndentHeader>(
       default: Date.now,
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     site_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'Location',
+      type: String,
       required: false,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Site ID must be a 6-digit numeric string (e.g., "400001")'
+      }
     },
     status: {
       type: String,
@@ -51,10 +59,14 @@ const IndentHeaderSchema = new Schema<IIndentHeader>(
       index: true,
     },
     created_by_user_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'User ID must be a 6-digit numeric string (e.g., "300001")'
+      }
     },
     created_by_role: {
       type: String,

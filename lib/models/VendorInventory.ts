@@ -2,8 +2,8 @@ import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IVendorInventory extends Document {
   id: string
-  vendorId: mongoose.Types.ObjectId
-  productId: mongoose.Types.ObjectId
+  vendorId: string // String ID reference to Vendor (6-digit numeric string)
+  productId: string // String ID reference to Uniform/Product (6-digit numeric string)
   sizeInventory: {
     [size: string]: number // e.g., { "S": 10, "M": 25, "L": 15 }
   }
@@ -26,14 +26,24 @@ const VendorInventorySchema = new Schema<IVendorInventory>(
     // Note: vendorId and productId don't need index: true because they're the first fields in compound indexes below
     // MongoDB can use compound indexes for queries on just vendorId or productId
     vendorId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Vendor',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     productId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Uniform',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Product ID must be a 6-digit numeric string (e.g., "200001")'
+      }
     },
     sizeInventory: {
       type: Map,

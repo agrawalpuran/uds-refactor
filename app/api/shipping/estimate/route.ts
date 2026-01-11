@@ -15,7 +15,14 @@ import { calculateVolumetricWeight } from '@/lib/db/shipment-package-access'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { sourcePincode, destinationPincode, shipmentPackageId, weightDetails, companyId, vendorId } = body
 
     console.log('[shipping/estimate API] Received request:', {
@@ -34,7 +41,6 @@ export async function POST(request: Request) {
         { error: 'sourcePincode and destinationPincode are required' },
         { status: 400 }
       )
-    }
 
     // Ensure pincodes are strings and valid 6-digit format
     const sourcePincodeStr = String(sourcePincode).trim()
@@ -46,14 +52,12 @@ export async function POST(request: Request) {
         { error: 'Pincodes must be 6-digit numbers' },
         { status: 400 }
       )
-    }
 
     if (!companyId || !vendorId) {
       return NextResponse.json(
         { error: 'companyId and vendorId are required' },
         { status: 400 }
       )
-    }
 
     await connectDB()
 
@@ -71,7 +75,6 @@ export async function POST(request: Request) {
         secondary: null,
         error: 'No active vendor routing found',
       }, { status: 200 })
-    }
 
     console.log('[shipping/estimate API] Found routing:', {
       routingId: routing.routingId,
@@ -89,7 +92,6 @@ export async function POST(request: Request) {
         secondary: null,
         error: 'Shipping provider not found',
       }, { status: 200 })
-    }
 
     console.log('[shipping/estimate API] Found provider:', {
       providerId: provider.providerId,
@@ -119,10 +121,10 @@ export async function POST(request: Request) {
         secondary: null,
         error: 'Provider instance not available',
       }, { status: 200 })
-    }
 
     // Check serviceability for primary courier
     let primaryResult: any = null
+    }
     if (routing.primaryCourierCode) {
       try {
         console.log('[shipping/estimate API] Checking primary courier serviceability:', {
@@ -356,12 +358,40 @@ export async function POST(request: Request) {
     }, { status: 200 })
   } catch (error: any) {
     console.error('[shipping/estimate API] Error:', error)
+    console.error('[shipping/estimate API] Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error',
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }

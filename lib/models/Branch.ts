@@ -14,8 +14,8 @@ export interface IBranch extends Document {
   country: string // Country name (DEFAULT: 'India')
   phone?: string
   email?: string
-  companyId: mongoose.Types.ObjectId
-  adminId?: mongoose.Types.ObjectId // Branch admin (employee)
+  companyId: string // String ID reference to Company (6-digit numeric string)
+  adminId?: string // String ID reference to Employee (6-digit numeric string)
   status: 'active' | 'inactive'
   createdAt?: Date
   updatedAt?: Date
@@ -88,15 +88,24 @@ const BranchSchema = new Schema<IBranch>(
       type: String,
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     adminId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
-      index: true,
+      type: String,
+      required: false,
+      validate: {
+        validator: function(v: string) {
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Admin ID must be a 6-digit numeric string (e.g., "300001")'
+      }
     },
     status: {
       type: String,

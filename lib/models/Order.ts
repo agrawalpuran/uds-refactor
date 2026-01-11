@@ -1,7 +1,7 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IOrderItem {
-  uniformId: mongoose.Types.ObjectId
+  uniformId: string // String ID reference to Uniform (6-digit numeric string)
   productId: string // Numeric/string product ID for correlation
   uniformName: string
   size: string
@@ -15,7 +15,7 @@ export interface IOrderItem {
 
 export interface IOrder extends Document {
   id: string
-  employeeId: mongoose.Types.ObjectId
+  employeeId: string // String ID reference to Employee (6-digit numeric string)
   employeeIdNum: string // Numeric/string employee ID for correlation
   employeeName: string
   items: IOrderItem[]
@@ -23,7 +23,7 @@ export interface IOrder extends Document {
   status: 'Awaiting approval' | 'Awaiting fulfilment' | 'Dispatched' | 'Delivered'
   orderDate: Date
   dispatchLocation: string
-  companyId: mongoose.Types.ObjectId
+  companyId: string // String ID reference to Company (6-digit numeric string)
   companyIdNum: number // Numeric company ID for correlation
   // Structured shipping address fields
   shipping_address_line_1: string // L1: House / Building / Street (REQUIRED)
@@ -45,9 +45,9 @@ export interface IOrder extends Document {
   pr_number?: string // Client/customer generated PR number (unique per company)
   pr_date?: Date // Date PR was raised
   pr_status?: 'DRAFT' | 'SUBMITTED' | 'PENDING_SITE_ADMIN_APPROVAL' | 'SITE_ADMIN_APPROVED' | 'PENDING_COMPANY_ADMIN_APPROVAL' | 'COMPANY_ADMIN_APPROVED' | 'REJECTED_BY_SITE_ADMIN' | 'REJECTED_BY_COMPANY_ADMIN' | 'PO_CREATED' // PR approval status
-  site_admin_approved_by?: mongoose.Types.ObjectId // Site Admin who approved (ref: Employee)
+  site_admin_approved_by?: string // Site Admin who approved (String ID ref: Employee)
   site_admin_approved_at?: Date // Timestamp of Site Admin approval
-  company_admin_approved_by?: mongoose.Types.ObjectId // Company Admin who approved (ref: Employee)
+  company_admin_approved_by?: string // Company Admin who approved (String ID ref: Employee)
   company_admin_approved_at?: Date // Timestamp of Company Admin approval
   // PR-Level Shipment Extension Fields (backward compatible, all nullable)
   shipmentId?: string // System-generated numeric shipment ID (nullable)
@@ -68,7 +68,7 @@ export interface IOrder extends Document {
   logisticsTrackingUrl?: string // Logistics tracking URL (nullable)
   logisticsPayloadRef?: string // Logistics payload reference (nullable)
   // Indent Extension Field
-  indent_id?: mongoose.Types.ObjectId // FK to IndentHeader (nullable for backward compatibility)
+  indent_id?: string // String ID reference to IndentHeader (nullable for backward compatibility)
   // Test Order Fields
   isTestOrder?: boolean // Flag to mark test orders created by Super Admin
   createdBy?: string // Creator identifier (e.g., 'superadmin')
@@ -79,9 +79,15 @@ export interface IOrder extends Document {
 
 const OrderItemSchema = new Schema<IOrderItem>({
   uniformId: {
-    type: Schema.Types.ObjectId,
-    ref: 'Uniform',
+    type: String,
     required: true,
+    validate: {
+      validator: function(v: string) {
+        // Must be exactly 6 digits
+        return /^\d{6}$/.test(v)
+      },
+      message: 'Uniform ID must be a 6-digit numeric string (e.g., "400001")'
+    }
   },
   productId: {
     type: String,
@@ -134,9 +140,15 @@ const OrderSchema = new Schema<IOrder>(
     // Note: employeeId doesn't need index: true because it's the first field in compound indexes below
     // MongoDB can use compound indexes for queries on just employeeId
     employeeId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
+      type: String,
       required: true,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Employee ID must be a 6-digit numeric string (e.g., "300001")'
+      }
     },
     employeeIdNum: {
       type: String,
@@ -171,10 +183,15 @@ const OrderSchema = new Schema<IOrder>(
       required: true,
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     companyIdNum: {
       type: Number,
@@ -299,20 +316,30 @@ const OrderSchema = new Schema<IOrder>(
       index: true,
     },
     site_admin_approved_by: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
+      type: String,
       required: false,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits if provided
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Site Admin ID must be a 6-digit numeric string (e.g., "300001")'
+      }
     },
     site_admin_approved_at: {
       type: Date,
       required: false,
     },
     company_admin_approved_by: {
-      type: Schema.Types.ObjectId,
-      ref: 'Employee',
+      type: String,
       required: false,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits if provided
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Company Admin ID must be a 6-digit numeric string (e.g., "300001")'
+      }
     },
     company_admin_approved_at: {
       type: Date,
@@ -421,9 +448,15 @@ const OrderSchema = new Schema<IOrder>(
     },
     // Indent Extension Field
     indent_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'IndentHeader',
+      type: String,
       required: false,
+      validate: {
+        validator: function(v: string) {
+          // Must be exactly 6 digits if provided
+          return !v || /^\d{6}$/.test(v)
+        },
+        message: 'Indent ID must be a 6-digit numeric string (e.g., "500001")'
+      }
       // Index defined below via schema.index()
     },
     // Test Order Fields

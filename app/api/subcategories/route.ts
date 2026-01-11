@@ -44,15 +44,10 @@ export async function GET(request: NextRequest) {
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
-    }
     
-    // Get company ObjectId
-    const company = await mongoose.connection.db.collection('companies').findOne({
-      $or: [
-        { id: validatedCompanyId },
-        { _id: mongoose.Types.ObjectId.isValid(validatedCompanyId) ? new mongoose.Types.ObjectId(validatedCompanyId) : null }
-      ]
-    })
+    // Get company - use string ID
+    const Company = mongoose.model('Company')
+    const company = await Company.findOne({ id: validatedCompanyId })
     
     if (!company) {
       console.error('[API /subcategories] ❌ Company not found for ID:', validatedCompanyId)
@@ -60,23 +55,17 @@ export async function GET(request: NextRequest) {
         { error: 'Company not found' },
         { status: 404 }
       )
-    }
     
-    console.log('[API /subcategories] Found company:', { id: company.id, _id: company._id.toString() })
+    console.log('[API /subcategories] Found company:', { id: company.id })
     
-    // Build query
+    // Build query - use string IDs
     const query: any = {
-      companyId: company._id
+      companyId: company.id
     }
     
     if (categoryId) {
-      // Find parent category
-      let parentCategory = null
-      if (mongoose.Types.ObjectId.isValid(categoryId)) {
-        parentCategory = await Category.findById(categoryId)
-      } else {
-        parentCategory = await Category.findOne({ id: categoryId })
-      }
+      // Find parent category - use string ID
+      const parentCategory = await Category.findOne({ id: categoryId })
       
       if (!parentCategory) {
         console.error('[API /subcategories] ❌ Parent category not found:', categoryId)
@@ -84,9 +73,8 @@ export async function GET(request: NextRequest) {
           { error: 'Parent category not found' },
           { status: 404 }
         )
-      }
       
-      query.parentCategoryId = parentCategory._id
+      query.parentCategoryId = parentCategory.id
       console.log('[API /subcategories] Filtering by parent category:', parentCategory.name)
     }
     
@@ -102,7 +90,7 @@ export async function GET(request: NextRequest) {
     })
     
     // First, check if ANY subcategories exist for this company (for debugging)
-    const allCompanySubcategories = await Subcategory.find({ companyId: company._id }).lean()
+    const allCompanySubcategories = await Subcategory.find({ companyId: company.id }).lean()
     console.log('[API /subcategories] All subcategories for company (no filters):', {
       count: allCompanySubcategories.length,
       breakdown: {
@@ -142,16 +130,9 @@ export async function GET(request: NextRequest) {
       let parentCategory: any = null
       
       if (parentCategoryId) {
-        // Check if it's populated (has _id property) or just an ObjectId
-        if (typeof parentCategoryId === 'object' && '_id' in parentCategoryId) {
+        // Check if it's populated - extract the data using string ID
+        if (typeof parentCategoryId === 'object' && 'id' in parentCategoryId) {
           // It's populated - extract the data
-          parentCategory = {
-            id: (parentCategoryId as any).id || (parentCategoryId as any)._id?.toString(),
-            name: (parentCategoryId as any).name,
-            isSystemCategory: (parentCategoryId as any).isSystemCategory
-          }
-        } else if (typeof parentCategoryId === 'object' && 'id' in parentCategoryId) {
-          // It's populated with the 'id' field selected
           parentCategory = {
             id: (parentCategoryId as any).id,
             name: (parentCategoryId as any).name,
@@ -196,11 +177,23 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error('[API /subcategories] ❌ Error fetching subcategories:', error)
     console.error('[API /subcategories] Error stack:', error.stack)
+    
+    // Return 400 for validation/input errors, 401 for auth errors, 500 for server errors
+    if (error.message && (
+      error.message.includes('required') ||
+      error.message.includes('invalid') ||
+      error.message.includes('Unauthorized')
+    )) {
+      return NextResponse.json(
+        { error: error.message || 'Invalid request' },
+        { status: error.message.includes('Unauthorized') ? 401 : 400 }
+      )
+    }
+    
     return NextResponse.json(
       { error: error.message || 'Failed to fetch subcategories' },
       { status: 500 }
     )
-  }
 }
 
 /**
@@ -211,7 +204,15 @@ export async function POST(request: NextRequest) {
   try {
     await connectDB()
     
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      )
     const { companyId, parentCategoryId, name } = body
     
     if (!parentCategoryId || !name) {
@@ -219,62 +220,51 @@ export async function POST(request: NextRequest) {
         { error: 'parentCategoryId and name are required' },
         { status: 400 }
       )
-    }
     
     // Validate companyId from authenticated user context
     let validatedCompanyId: string
     try {
-      const authContext = await validateAndGetCompanyId(request, companyId)
+    }
+    const authContext = await validateAndGetCompanyId(request, companyId)
       validatedCompanyId = authContext.companyId
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
-    }
     
-    // Get company ObjectId
-    const company = await mongoose.connection.db.collection('companies').findOne({
-      $or: [
-        { id: validatedCompanyId },
-        { _id: mongoose.Types.ObjectId.isValid(validatedCompanyId) ? new mongoose.Types.ObjectId(validatedCompanyId) : null }
-      ]
-    })
+    // Get company - use string ID
+    const Company = mongoose.model('Company')
+    const company = await Company.findOne({ id: validatedCompanyId })
     
     if (!company) {
       return NextResponse.json(
         { error: 'Company not found' },
         { status: 404 }
       )
-    }
     
-    // Find parent category
-    let parentCategory = null
-    if (mongoose.Types.ObjectId.isValid(parentCategoryId)) {
-      parentCategory = await Category.findById(parentCategoryId)
-    } else {
-      parentCategory = await Category.findOne({ id: parentCategoryId })
+    // Find parent category - use string ID
     }
+    const parentCategory = await Category.findOne({ id: parentCategoryId })
     
     if (!parentCategory) {
       return NextResponse.json(
         { error: 'Parent category not found' },
         { status: 404 }
       )
-    }
     
+    }
     if (parentCategory.status !== 'active') {
       return NextResponse.json(
         { error: 'Parent category is not active' },
         { status: 400 }
       )
-    }
     
-    // Check if subcategory with same name already exists for this company and parent category
+    // Check if subcategory with same name already exists for this company and parent category - use string IDs
     const existing = await Subcategory.findOne({
-      parentCategoryId: parentCategory._id,
-      companyId: company._id,
-      name: { $regex: new RegExp(`^${name.trim()}$`, 'i') }
+      parentCategoryId: parentCategory.id,
+      companyId: company.id,
+      name: { $regex: new RegExp(`^${name.trim()$`, 'i') }
     })
     
     if (existing) {
@@ -282,20 +272,20 @@ export async function POST(request: NextRequest) {
         { error: 'Subcategory with this name already exists for this category and company' },
         { status: 409 }
       )
-    }
     
     // Generate unique ID
+    }
     let subcategoryId = 600001
     while (await Subcategory.findOne({ id: subcategoryId.toString() })) {
       subcategoryId++
     }
     
-    // Create subcategory
+    // Create subcategory - use string IDs
     const subcategory = await Subcategory.create({
       id: subcategoryId.toString(),
       name: name.trim(),
-      parentCategoryId: parentCategory._id,
-      companyId: company._id,
+      parentCategoryId: parentCategory.id,
+      companyId: company.id,
       status: 'active'
     })
     
@@ -306,14 +296,13 @@ export async function POST(request: NextRequest) {
       success: true,
       subcategory: {
         id: subcategory.id,
-        _id: subcategory._id.toString(),
         name: subcategory.name,
-        parentCategoryId: subcategory.parentCategoryId.toString(),
+        parentCategoryId: String(subcategory.parentCategoryId),
         parentCategory: {
           id: (subcategory.parentCategoryId as any).id,
           name: (subcategory.parentCategoryId as any).name
         },
-        companyId: subcategory.companyId.toString(),
+        companyId: String(subcategory.companyId),
         status: subcategory.status
       }
     })
@@ -326,13 +315,11 @@ export async function POST(request: NextRequest) {
         { error: 'Subcategory with this name already exists for this category and company' },
         { status: 409 }
       )
-    }
     
     return NextResponse.json(
       { error: error.message || 'Failed to create subcategory' },
       { status: 500 }
     )
-  }
 }
 
 /**
@@ -343,7 +330,14 @@ export async function PUT(request: NextRequest) {
   try {
     await connectDB()
     
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { subcategoryId, name, status } = body
     
     if (!subcategoryId) {
@@ -351,53 +345,33 @@ export async function PUT(request: NextRequest) {
         { error: 'subcategoryId is required' },
         { status: 400 }
       )
-    }
     
-    // Find subcategory
-    let subcategory = null
-    if (mongoose.Types.ObjectId.isValid(subcategoryId)) {
-      subcategory = await Subcategory.findById(subcategoryId)
-    } else {
-      subcategory = await Subcategory.findOne({ id: subcategoryId })
+    // Find subcategory - use string ID
     }
+    const subcategory = await Subcategory.findOne({ id: subcategoryId })
     
     if (!subcategory) {
       return NextResponse.json(
         { error: 'Subcategory not found' },
         { status: 404 }
       )
-    }
     
     // Validate companyId from authenticated user context and ensure subcategory belongs to user's company
     try {
       const authContext = await validateAndGetCompanyId(request)
-      if (subcategory.companyId.toString() !== authContext.companyId) {
-        // Get company ObjectId for comparison
-        if (!mongoose.connection.db) {
-          return NextResponse.json(
-            { error: 'Database connection not available' },
-            { status: 500 }
-          )
-        }
-        const company = await mongoose.connection.db.collection('companies').findOne({
-          $or: [
-            { id: authContext.companyId },
-            { _id: mongoose.Types.ObjectId.isValid(authContext.companyId) ? new mongoose.Types.ObjectId(authContext.companyId) : null }
-          ]
-        })
-        if (company && subcategory.companyId.toString() !== company._id.toString()) {
-          return NextResponse.json(
-            { error: 'Forbidden: Subcategory does not belong to your company' },
-            { status: 403 }
-          )
-        }
-      }
+      // Compare string IDs directly
+      const subcategoryCompanyId = String(subcategory.companyId)
+    }
+    if (subcategoryCompanyId !== authContext.companyId) {
+        return NextResponse.json(
+          { error: 'Forbidden: Subcategory does not belong to your company' },
+          { status: 403 }
+        )
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
-    }
     
     // Update fields
     if (name !== undefined && name !== subcategory.name) {
@@ -408,7 +382,7 @@ export async function PUT(request: NextRequest) {
         parentCategoryId: subcategory.parentCategoryId,
         companyId: subcategory.companyId,
         name: { $regex: new RegExp(`^${trimmedName}$`, 'i') },
-        _id: { $ne: subcategory._id }
+        id: { $ne: subcategory.id }
       })
       
       if (existing) {
@@ -416,7 +390,6 @@ export async function PUT(request: NextRequest) {
           { error: 'Subcategory with this name already exists for this category and company' },
           { status: 409 }
         )
-      }
       
       subcategory.name = trimmedName
     }
@@ -427,7 +400,6 @@ export async function PUT(request: NextRequest) {
           { error: 'Status must be "active" or "inactive"' },
           { status: 400 }
         )
-      }
       subcategory.status = status
     }
     
@@ -438,17 +410,48 @@ export async function PUT(request: NextRequest) {
       success: true,
       subcategory: {
         id: subcategory.id,
-        _id: subcategory._id.toString(),
         name: subcategory.name,
-        parentCategoryId: subcategory.parentCategoryId.toString(),
-        companyId: subcategory.companyId.toString(),
+        parentCategoryId: String(subcategory.parentCategoryId),
+        companyId: String(subcategory.companyId),
         status: subcategory.status
       }
     })
   } catch (error: any) {
     console.error('Error updating subcategory:', error)
+    console.error('Error updating subcategory:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to update subcategory' },
+      { error: errorMessage },
       { status: 500 }
     )
   }
@@ -470,55 +473,38 @@ export async function DELETE(request: NextRequest) {
         { error: 'subcategoryId is required' },
         { status: 400 }
       )
-    }
     
-    // Find subcategory
-    let subcategory = null
-    if (mongoose.Types.ObjectId.isValid(subcategoryId)) {
-      subcategory = await Subcategory.findById(subcategoryId)
-    } else {
-      subcategory = await Subcategory.findOne({ id: subcategoryId })
+    // Find subcategory - use string ID
     }
+    const subcategory = await Subcategory.findOne({ id: subcategoryId })
     
     if (!subcategory) {
       return NextResponse.json(
         { error: 'Subcategory not found' },
         { status: 404 }
       )
-    }
     
     // Validate companyId from authenticated user context and ensure subcategory belongs to user's company
     try {
       const authContext = await validateAndGetCompanyId(request)
-      if (!mongoose.connection.db) {
-        return NextResponse.json(
-          { error: 'Database connection not available' },
-          { status: 500 }
-        )
-      }
-      const company = await mongoose.connection.db.collection('companies').findOne({
-        $or: [
-          { id: authContext.companyId },
-          { _id: mongoose.Types.ObjectId.isValid(authContext.companyId) ? new mongoose.Types.ObjectId(authContext.companyId) : null }
-        ]
-      })
-      if (company && subcategory.companyId.toString() !== company._id.toString()) {
+      // Compare string IDs directly
+      const subcategoryCompanyId = String(subcategory.companyId)
+    }
+    if (subcategoryCompanyId !== authContext.companyId) {
         return NextResponse.json(
           { error: 'Forbidden: Subcategory does not belong to your company' },
           { status: 403 }
         )
-      }
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
-    }
     
-    // Check if subcategory has active product mappings
+    // Check if subcategory has active product mappings - use string ID
     const ProductSubcategoryMapping = mongoose.model('ProductSubcategoryMapping')
     const mappingCount = await ProductSubcategoryMapping.countDocuments({
-      subCategoryId: subcategory._id
+      subCategoryId: subcategory.id
     })
     
     if (mappingCount > 0) {
@@ -531,10 +517,10 @@ export async function DELETE(request: NextRequest) {
       )
     }
     
-    // Check if subcategory has active eligibilities
+    // Check if subcategory has active eligibilities - use string ID
     const DesignationSubcategoryEligibility = mongoose.model('DesignationSubcategoryEligibility')
     const eligibilityCount = await DesignationSubcategoryEligibility.countDocuments({
-      subCategoryId: subcategory._id,
+      subCategoryId: subcategory.id,
       status: 'active'
     })
     
@@ -558,8 +544,40 @@ export async function DELETE(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Error deleting subcategory:', error)
+    console.error('Error deleting subcategory:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to delete subcategory' },
+      { error: errorMessage },
       { status: 500 }
     )
   }

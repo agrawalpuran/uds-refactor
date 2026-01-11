@@ -18,8 +18,8 @@ import mongoose, { Schema, Document } from 'mongoose'
 export interface IDesignationSubcategoryEligibility extends Document {
   id: string // Unique 6-digit ID (e.g., "700001")
   designationId: string // Designation name (e.g., "General Manager", "Office Admin")
-  subCategoryId: mongoose.Types.ObjectId // Reference to Subcategory (REQUIRED)
-  companyId: mongoose.Types.ObjectId // Reference to Company (REQUIRED)
+  subCategoryId: string // String ID reference to Subcategory (6-digit numeric string) - REQUIRED
+  companyId: string // String ID reference to Company (6-digit numeric string) - REQUIRED
   gender?: 'male' | 'female' | 'unisex' // Gender filter (optional)
   quantity: number // Number of items allowed per cycle
   renewalFrequency: number // Renewal frequency value
@@ -49,16 +49,24 @@ const DesignationSubcategoryEligibilitySchema = new Schema<IDesignationSubcatego
       trim: true,
     },
     subCategoryId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Subcategory',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Subcategory ID must be a 6-digit numeric string (e.g., "600001")'
+      }
     },
     companyId: {
-      type: Schema.Types.ObjectId,
-      ref: 'Company',
+      type: String,
       required: true,
-      index: true,
+      validate: {
+        validator: function(v: string) {
+          return /^\d{6}$/.test(v)
+        },
+        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+      }
     },
     gender: {
       type: String,

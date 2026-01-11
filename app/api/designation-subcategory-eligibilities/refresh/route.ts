@@ -24,7 +24,14 @@ export async function POST(request: NextRequest) {
   try {
     await connectDB()
     
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { companyId, designationId, gender = 'unisex' } = body
     
     if (!companyId || !designationId) {
@@ -32,44 +39,32 @@ export async function POST(request: NextRequest) {
         { error: 'companyId and designationId are required' },
         { status: 400 }
       )
-    }
     
     // Validate companyId from authenticated user context
     let validatedCompanyId: string
     try {
-      const authContext = await validateAndGetCompanyId(request, companyId)
+    }
+    const authContext = await validateAndGetCompanyId(request, companyId)
       validatedCompanyId = authContext.companyId
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
-    }
     
-    // Get company ObjectId
-    if (!mongoose.connection.db) {
-      return NextResponse.json(
-        { error: 'Database connection not available' },
-        { status: 500 }
-      )
-    }
-    const company = await mongoose.connection.db.collection('companies').findOne({
-      $or: [
-        { id: validatedCompanyId },
-        ...(mongoose.Types.ObjectId.isValid(validatedCompanyId) ? [{ _id: new mongoose.Types.ObjectId(validatedCompanyId) }] : [])
-      ]
-    })
+    // Get company - use string ID
+    const company = await Company.findOne({ id: validatedCompanyId })
     
     if (!company) {
       return NextResponse.json(
         { error: 'Company not found' },
         { status: 404 }
       )
-    }
     
-    // Get all active designation-subcategory eligibilities for this designation, company, and gender
+    // Get all active designation-subcategory eligibilities - use string IDs
+    }
     const eligibilities = await DesignationSubcategoryEligibility.find({
-      companyId: company._id,
+      companyId: company.id,
       designationId: designationId.trim(),
       gender: gender === 'unisex' ? { $in: ['male', 'female', 'unisex'] } : gender,
       status: 'active'
@@ -82,32 +77,26 @@ export async function POST(request: NextRequest) {
         message: `No active eligibility rules found for designation "${designationId}" and gender "${gender}"`,
         employeesUpdated: 0
       })
-    }
     
-    // Get all subcategory IDs
+    // Get all subcategory string IDs
     const subcategoryIds = eligibilities
-      .map(e => e.subCategoryId)
+      .map(e => String(e.subCategoryId))
       .filter(Boolean)
-      .map((s: any) => {
-        if (mongoose.Types.ObjectId.isValid(s)) {
-          return new mongoose.Types.ObjectId(s)
-        }
-        return s
-      })
     
-    // Get all subcategories with their parent categories
+    // Get all subcategories with their parent categories - use string IDs
+    }
     const subcategories = await Subcategory.find({
-      _id: { $in: subcategoryIds },
-      companyId: company._id,
+      id: { $in: subcategoryIds },
+      companyId: company.id,
       status: 'active'
     })
       .populate('parentCategoryId', 'id name')
       .lean()
     
-    // Create a map: subcategoryId -> subcategory data
+    // Create a map: subcategoryId -> subcategory data - use string IDs
     const subcategoryMapById = new Map()
     for (const subcat of subcategories) {
-      const subcatId = (subcat as any)._id.toString()
+      const subcatId = (subcat as any).id
       subcategoryMapById.set(subcatId, subcat)
     }
     
@@ -115,7 +104,7 @@ export async function POST(request: NextRequest) {
     const categoryEligibility: Record<string, { quantity: number; renewalFrequency: number }> = {}
     
     for (const elig of eligibilities) {
-      const subcatId = elig.subCategoryId?.toString()
+      const subcatId = String(elig.subCategoryId)
       const subcat = subcategoryMapById.get(subcatId)
       
       if (subcat && (subcat as any).parentCategoryId) {
@@ -145,8 +134,8 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // Find all employees with this designation and company
-    const allEmployees = await Employee.find({ companyId: company._id }).lean()
+    // Find all employees with this designation and company - use string ID
+    const allEmployees = await Employee.find({ companyId: company.id }).lean()
     
     // Filter employees by designation (handle encryption)
     const matchingEmployees: any[] = []
@@ -175,14 +164,18 @@ export async function POST(request: NextRequest) {
         message: `No employees found with designation "${designationId}" and gender "${gender || 'all'}"`,
         employeesUpdated: 0
       })
-    }
     
     // Update employee eligibility
     let updatedCount = 0
     for (const emp of matchingEmployees) {
       try {
-        const employee = await Employee.findById(emp._id)
-        if (employee) {
+        // Use string ID to find employee
+    }
+    const employee = await Employee.findOne({ id: emp.id || emp.employeeId })
+    if (!employee) {
+      return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+    }
+    if (employee) {
           // Reset eligibility to defaults
           employee.eligibility = {
             shirt: 0,
@@ -232,8 +225,40 @@ export async function POST(request: NextRequest) {
     
   } catch (error: any) {
     console.error('Error refreshing employee eligibility:', error)
+    console.error('Error refreshing employee eligibility:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      { error: error.message || 'Failed to refresh employee eligibility' },
+      { error: errorMessage },
       { status: 500 }
     )
   }

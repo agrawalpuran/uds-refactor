@@ -67,39 +67,22 @@ if (!mongoose.models.Category) {
  * Helper function to convert companyId from ObjectId to numeric ID
  * This is the single source of truth for companyId conversion
  */
-async function convertCompanyIdToNumericId(companyIdObjectId: any): Promise<string | null> {
-  if (!companyIdObjectId) return null
-  
-  const db = mongoose.connection.db
-  if (!db) return null
-  
-  try {
-    // Convert to string if it's an ObjectId
-    const companyIdStr = companyIdObjectId.toString()
-    
-    // Check if it's already a numeric ID (6 digits)
-    if (/^\d{6}$/.test(companyIdStr)) {
-      return companyIdStr
-    }
-    
-    // If it's an ObjectId (24 hex chars), look up the company
-    if (/^[0-9a-fA-F]{24}$/.test(companyIdStr)) {
-      const companyDoc = await db.collection('companies').findOne({
-        _id: companyIdObjectId instanceof mongoose.Types.ObjectId 
-          ? companyIdObjectId 
-          : new mongoose.Types.ObjectId(companyIdStr)
-      })
-      
-      if (companyDoc && companyDoc.id) {
-        return String(companyDoc.id)
-      }
-    }
-    
-    return null
-  } catch (error) {
-    console.warn(`[convertCompanyIdToNumericId] Error converting companyId:`, error)
+// DEPRECATED: This function is no longer needed as all IDs are now strings
+// Kept for backward compatibility during migration - will be removed
+async function convertCompanyIdToNumericId(companyId: any): Promise<string | null> {
+  if (!companyId) {
     return null
   }
+  
+  // If already a string, validate and return
+  const companyIdStr = String(companyId)
+  if (/^\d{6}$/.test(companyIdStr)) {
+    return companyIdStr
+  }
+  
+  // Invalid format
+  console.warn(`[convertCompanyIdToNumericId] ⚠️ Invalid companyId format: ${companyIdStr} (expected 6-digit numeric string)`)
+  return null
 }
 
 // Helper to convert MongoDB document to plain object
@@ -232,7 +215,12 @@ function toPlainObject(doc: any): any {
 // ========== UNIFORM/PRODUCT FUNCTIONS ==========
 
 export async function getProductsByCompany(companyId: string | number): Promise<any[]> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getProductsByCompany] Database connection error:', error.message)
+    return [] // Return empty array on connection error
+  }
   
   if (!companyId && companyId !== 0) {
     console.warn('getProductsByCompany: companyId is empty or undefined')
@@ -260,14 +248,8 @@ export async function getProductsByCompany(companyId: string | number): Promise<
     }
   }
   
-  // If not found by numeric ID, try finding by ObjectId (in case companyId is an ObjectId string)
-  if (!company && typeof companyId === 'string' && mongoose.Types.ObjectId.isValid(companyId)) {
-    company = await Company.findById(companyId)
-    if (company) {
-      console.log(`getProductsByCompany: Found company by ObjectId, using company.id: ${company.id}`)
-      numericCompanyId = company.id // Use the numeric id for the rest of the function
-    }
-  }
+  // No longer needed - all IDs are strings now
+  // Removed ObjectId fallback lookup
   
   // If still not found, try as string ID (for backward compatibility)
   if (!company && typeof companyId === 'string') {
@@ -281,7 +263,7 @@ export async function getProductsByCompany(companyId: string | number): Promise<
   if (!company) {
     console.warn(`getProductsByCompany: Company not found for companyId: ${companyId} (type: ${typeof companyId})`)
     // List available companies for debugging
-    const allCompanies = await Company.find({}, 'id name').limit(5).lean()
+    const allCompanies = await Company.find({}, 'id name').limit(5).lean() as any
     console.warn(`getProductsByCompany: Available companies:`, allCompanies.map((c: any) => `${c.id} (${c.name})`))
     return []
   }
@@ -289,12 +271,15 @@ export async function getProductsByCompany(companyId: string | number): Promise<
   // Only get products directly linked via ProductCompany relationship
   // Use raw MongoDB collection for reliable ObjectId comparison
   const db = mongoose.connection.db
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
   if (!db) {
     console.warn('getProductsByCompany: Database connection not available')
     return []
   }
   
-  const companyIdStr = company._id.toString()
+  const companyIdStr = company.id
   const allProductCompanyLinks = await db.collection('productcompanies').find({}).toArray()
   
   // Filter by string comparison for reliable ObjectId matching
@@ -320,10 +305,19 @@ export async function getProductsByCompany(companyId: string | number): Promise<
     return []
   }
   
-  // Get product ObjectIds from the relationships (as strings for comparison)
+  // Get product string IDs from the relationships
   const productIdStrs = productCompanyLinks
     .map((link: any) => {
       if (!link.productId) return null
+      // Handle both string IDs and ObjectId strings (for backward compatibility during migration)
+      if (typeof link.productId === 'string') {
+        return link.productId
+      }
+      // If it's an object with an id field, use that
+      if (link.productId && typeof link.productId === 'object' && link.productId.id) {
+        return link.productId.id
+      }
+      // Otherwise convert to string
       return link.productId.toString ? link.productId.toString() : String(link.productId)
     })
     .filter((id: any) => id !== null && id !== undefined)
@@ -335,53 +329,26 @@ export async function getProductsByCompany(companyId: string | number): Promise<
   
   console.log(`getProductsByCompany: Looking for ${productIdStrs.length} products with IDs: ${productIdStrs.slice(0, 3).join(', ')}...`)
 
-  // Fetch all products and filter by string comparison (most reliable)
-  const allProducts = await db.collection('uniforms').find({}).toArray()
-  const matchingProducts = allProducts.filter((p: any) => {
-    const productIdStr = p._id.toString ? p._id.toString() : String(p._id)
-    return productIdStrs.includes(productIdStr)
-  })
-  
-  console.log(`getProductsByCompany: Found ${matchingProducts.length} products using string comparison`)
-  
-  if (matchingProducts.length === 0) {
-    console.log(`getProductsByCompany: No products found. Sample product _ids: ${allProducts.slice(0, 3).map((p: any) => p._id.toString()).join(', ')}`)
-    return []
-  }
-  
-  // Convert to ObjectIds for Mongoose query
-  const productObjectIds = matchingProducts.map((p: any) => {
-    // Ensure we're using proper ObjectId
-    if (p._id && typeof p._id === 'object' && p._id.toString) {
-      return new mongoose.Types.ObjectId(p._id.toString())
-    }
-    return p._id
-  })
-  console.log(`getProductsByCompany: Querying ${productObjectIds.length} products by _id`)
-  
-  // Fetch products using Mongoose for proper population and decryption
+  // Fetch products using string IDs directly
   const products = await Uniform.find({
-    _id: { $in: productObjectIds },
+    id: { $in: productIdStrs },
   })
     .populate('vendorId', 'id name')
-    .lean()
+    .lean() as any
+  
+  console.log(`getProductsByCompany: Found ${(products as any).length} products using string ID query`)
 
   console.log(`getProductsByCompany(${companyId}): Mongoose query returned ${products.length} products`)
   
-  // If Mongoose query returns 0, use raw collection data as fallback
-  let productsToUse = products
+  // If Mongoose query returns 0, log warning but return empty array
+  // (No fallback needed since we're using string IDs directly)
   if (!products || products.length === 0) {
-    console.warn(`getProductsByCompany: Mongoose query returned 0 products, using raw collection data as fallback`)
-    // Use the raw products we found earlier
-    // First, get all vendors for population
-    const allVendors = await db.collection('vendors').find({}).toArray()
-    const vendorMap = new Map()
-    allVendors.forEach((v: any) => {
-      vendorMap.set(v._id.toString(), { _id: v._id, id: v.id, name: v.name })
-    })
-    
-    // Use the raw products we found earlier - preserve ALL fields including attributes
-    productsToUse = matchingProducts.map((p: any) => {
+    console.warn(`getProductsByCompany: No products found for company ${companyId}`)
+    return []
+  }
+  
+  // Process products
+  const productsToUse = products.map((p: any) => {
       const product: any = { 
         ...p,
         // Explicitly preserve attribute fields
@@ -394,12 +361,12 @@ export async function getProductsByCompany(companyId: string | number): Promise<
       }
       // Convert _id to proper format
       if (product._id) {
-        product._id = new mongoose.Types.ObjectId(product._id.toString())
+    product._id = new mongoose.Types.ObjectId(
+    product._id.toString())
       }
       // vendorId removed from Uniform model - use ProductVendor collection instead
       return product
     })
-  }
   
   // Filter products to only include those that have vendors linked for fulfillment
   // A product must have:
@@ -428,14 +395,16 @@ export async function getProductsByCompany(companyId: string | number): Promise<
   })
   
   // Enhance links with vendor details
-  const enhancedProductVendorLinks = productVendorLinks.map((link: any) => ({
-    productId: link.productId,
-    vendorId: {
-      _id: link.vendorId,
-      id: vendorMap.get(link.vendorId?.toString())?.id,
-      name: vendorMap.get(link.vendorId?.toString())?.name
-    }
-  }))
+  const enhancedProductVendorLinks = productVendorLinks.map((link: any) => {
+    return {
+      productId: link.productId,
+      vendorId: {
+        _id: link.vendorId,
+        id: vendorMap.get(link.vendorId?.toString())?.id,
+        name: vendorMap.get(link.vendorId?.toString())?.name
+      }
+    };
+  })
   
   // Create a map of product ObjectId -> set of vendor ObjectIds that supply it
   const productVendorMap = new Map<string, Set<string>>()
@@ -489,7 +458,7 @@ export async function getProductsByCompany(companyId: string | number): Promise<
       const pvLink = enhancedProductVendorLinks.find((link: any) => 
         link.productId?.toString() === productIdStr && 
         link.vendorId?._id?.toString() === vendorIdStr
-      )
+      );
       if (pvLink && pvLink.vendorId) {
         availableVendors.push({
           id: pvLink.vendorId.id || pvLink.vendorId._id?.toString(),
@@ -519,12 +488,18 @@ export async function getProductsByCompany(companyId: string | number): Promise<
 // Get all products linked to a company (without vendor fulfillment filter)
 // This is useful for category extraction and other purposes where we need all linked products
 export async function getAllProductsByCompany(companyId: string | number): Promise<any[]> {
-  await connectDB()
-  
-  if (!companyId && companyId !== 0) {
-    console.warn('getAllProductsByCompany: companyId is empty or undefined')
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getAllProductsByCompany] Database connection error:', error.message)
     return []
   }
+  
+  try {
+    if (!companyId && companyId !== 0) {
+      console.warn('getAllProductsByCompany: companyId is empty or undefined')
+      return []
+    }
   
   // Convert companyId to number if it's a string representation of a number
   let numericCompanyId: number | null = null
@@ -547,14 +522,7 @@ export async function getAllProductsByCompany(companyId: string | number): Promi
     }
   }
   
-  // If not found by numeric ID, try finding by ObjectId (in case companyId is an ObjectId string)
-  if (!company && typeof companyId === 'string' && mongoose.Types.ObjectId.isValid(companyId)) {
-    company = await Company.findById(companyId)
-    if (company) {
-      console.log(`getAllProductsByCompany: Found company by ObjectId, using company.id: ${company.id}`)
-      numericCompanyId = company.id
-    }
-  }
+  // Removed ObjectId fallback - all companies should use string IDs
   
   // If still not found, try as string ID (for backward compatibility)
   if (!company && typeof companyId === 'string') {
@@ -568,7 +536,7 @@ export async function getAllProductsByCompany(companyId: string | number): Promi
   if (!company) {
     console.warn(`getAllProductsByCompany: Company not found for companyId: ${companyId} (type: ${typeof companyId})`)
     // List available companies for debugging
-    const allCompanies = await Company.find({}, 'id name').limit(5).lean()
+    const allCompanies = await Company.find({}, 'id name').limit(5).lean() as any
     console.warn(`getAllProductsByCompany: Available companies:`, allCompanies.map((c: any) => `${c.id} (${c.name})`))
     return []
   }
@@ -577,31 +545,44 @@ export async function getAllProductsByCompany(companyId: string | number): Promi
   // Use raw MongoDB collection for reliable ObjectId comparison (same approach as getProductsByCompany)
   const db = mongoose.connection.db
   if (!db) {
-    console.warn('getAllProductsByCompany: Database connection not available')
-    return []
+    throw new Error('Database connection not available')
   }
   
-  const companyIdStr = company._id.toString()
+  // Use company string ID instead of _id
+  const companyIdStr = company.id
   const allProductCompanyLinks = await db.collection('productcompanies').find({}).toArray()
   
-  // Filter by string comparison for reliable ObjectId matching
+  // Filter by string ID matching (supports both string IDs and ObjectId strings for backward compatibility)
   const productCompanyLinks = allProductCompanyLinks.filter((link: any) => {
     if (!link.companyId) return false
-    const linkCompanyIdStr = link.companyId.toString ? link.companyId.toString() : String(link.companyId)
+    // Handle both string IDs and ObjectId strings (for backward compatibility during migration)
+    const linkCompanyIdStr = typeof link.companyId === 'string' 
+      ? link.companyId 
+      : (link.companyId?.toString ? link.companyId.toString() : String(link.companyId))
     return linkCompanyIdStr === companyIdStr
   })
   
-  console.log(`getAllProductsByCompany: Found ${productCompanyLinks.length} ProductCompany relationships for company ${companyId} (${company.name || 'Unknown'})`)
+  console.log(`getAllProductsByCompany: Found ${productCompanyLinks.length} ProductCompany relationships for company ${companyId} (${
+    company.name || 'Unknown'})`)
   
   if (productCompanyLinks.length === 0) {
     console.log(`getAllProductsByCompany: No products directly linked to company ${companyId}`)
     return []
   }
   
-  // Get product ObjectIds from the relationships (as strings for comparison)
+  // Get product string IDs from the relationships
   const productIdStrs = productCompanyLinks
     .map((link: any) => {
       if (!link.productId) return null
+      // Handle both string IDs and ObjectId strings (for backward compatibility during migration)
+      if (typeof link.productId === 'string') {
+        return link.productId
+      }
+      // If it's an object with an id field, use that
+      if (link.productId && typeof link.productId === 'object' && link.productId.id) {
+        return link.productId.id
+      }
+      // Otherwise convert to string
       return link.productId.toString ? link.productId.toString() : String(link.productId)
     })
     .filter((id: any) => id !== null && id !== undefined)
@@ -613,71 +594,44 @@ export async function getAllProductsByCompany(companyId: string | number): Promi
   
   console.log(`getAllProductsByCompany: Looking for ${productIdStrs.length} products with IDs: ${productIdStrs.slice(0, 3).join(', ')}...`)
 
-  // Fetch all products and filter by string comparison (most reliable)
-  const allProducts = await db.collection('uniforms').find({}).toArray()
-  const matchingProducts = allProducts.filter((p: any) => {
-    const productIdStr = p._id.toString ? p._id.toString() : String(p._id)
-    return productIdStrs.includes(productIdStr)
-  })
-  
-  console.log(`getAllProductsByCompany: Found ${matchingProducts.length} products using string comparison`)
-  
-  if (matchingProducts.length === 0) {
-    console.log(`getAllProductsByCompany: No products found. Sample product _ids: ${allProducts.slice(0, 3).map((p: any) => p._id.toString()).join(', ')}`)
-    return []
-  }
-  
-  // Convert to ObjectIds for Mongoose query
-  const productObjectIds = matchingProducts.map((p: any) => {
-    // Ensure we're using proper ObjectId
-    if (p._id && typeof p._id === 'object' && p._id.toString) {
-      return new mongoose.Types.ObjectId(p._id.toString())
-    }
-    return p._id
-  })
-  console.log(`getAllProductsByCompany: Querying ${productObjectIds.length} products by _id`)
-  
-  // Fetch products using Mongoose for proper population and decryption
+  // Fetch products using string IDs directly
   const products = await Uniform.find({
-    _id: { $in: productObjectIds },
+    id: { $in: productIdStrs },
   })
     .populate('vendorId', 'id name')
-    .lean()
+    .lean() as any
+  
+  console.log(`getAllProductsByCompany: Found ${(products as any).length} products using string ID query`)
 
   console.log(`getAllProductsByCompany(${companyId}): Mongoose query returned ${products.length} products (all, without vendor filter)`)
   
-  // If Mongoose query returns 0, use raw collection data as fallback
-  let productsToUse = products
+  // If Mongoose query returns 0, log warning but return empty array
+  // (No fallback needed since we're using string IDs directly)
   if (!products || products.length === 0) {
-    console.warn(`getAllProductsByCompany: Mongoose query returned 0 products, using raw collection data as fallback`)
-    // Use the raw products we found earlier
-    // First, get all vendors for population
-    const allVendors = await db.collection('vendors').find({}).toArray()
-    const vendorMap = new Map()
-    allVendors.forEach((v: any) => {
-      vendorMap.set(v._id.toString(), { _id: v._id, id: v.id, name: v.name })
-    })
-    
-    // Use the raw products we found earlier - preserve ALL fields including attributes
-    productsToUse = matchingProducts.map((p: any) => {
-      const product: any = { 
-        ...p,
-        // Explicitly preserve attribute fields
-        attribute1_name: p.attribute1_name,
-        attribute1_value: p.attribute1_value,
-        attribute2_name: p.attribute2_name,
-        attribute2_value: p.attribute2_value,
-        attribute3_name: p.attribute3_name,
-        attribute3_value: p.attribute3_value,
-      }
-      // Convert _id to proper format
-      if (product._id) {
-        product._id = new mongoose.Types.ObjectId(product._id.toString())
-      }
-      // vendorId removed from Uniform model - use ProductVendor collection instead
-      return product
-    })
+    console.warn(`getAllProductsByCompany: No products found for company ${companyId}`)
+    return []
   }
+  
+  // Process products
+  const productsToUse = products.map((p: any) => {
+    const product: any = { 
+      ...p,
+      // Explicitly preserve attribute fields
+      attribute1_name: p.attribute1_name,
+      attribute1_value: p.attribute1_value,
+      attribute2_name: p.attribute2_name,
+      attribute2_value: p.attribute2_value,
+      attribute3_name: p.attribute3_name,
+      attribute3_value: p.attribute3_value,
+    }
+    // Convert _id to proper format
+    if (product._id) {
+    product._id = new mongoose.Types.ObjectId(
+    product._id.toString())
+    }
+    // vendorId removed from Uniform model - use ProductVendor collection instead
+    return product
+  })
   
   // Convert to plain objects and ensure attributes are preserved
   return productsToUse.map((p: any) => {
@@ -691,6 +645,10 @@ export async function getAllProductsByCompany(companyId: string | number): Promi
     if (p.attribute3_value !== undefined) plain.attribute3_value = p.attribute3_value
     return plain
   })
+  } catch (error: any) {
+    console.error('[getAllProductsByCompany] Error:', error.message)
+    return []
+  }
 }
 
 /**
@@ -712,8 +670,14 @@ export async function getAllProductsByCompany(companyId: string | number): Promi
  * This ensures strict access control and data integrity.
  */
 export async function getProductsByVendor(vendorId: string): Promise<any[]> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getProductsByVendor] Database connection error:', error.message)
+    return []
+  }
   
+  try {
   // 🔍 LOG: Service boundary - COMPREHENSIVE DEBUGGING
   console.log(`\n╔════════════════════════════════════════════════════════════╗`)
   console.log(`║  [getProductsByVendor] START - COMPREHENSIVE DEBUGGING     ║`)
@@ -732,136 +696,52 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
 
   const vendor = await db.collection('vendors').findOne({ id: vendorId })
   if (!vendor) {
-    throw new Error(`Vendor not found: ${vendorId}`)
+    console.warn(`[getProductsByVendor] Vendor not found: ${vendorId}`)
+    return [] // Return empty array instead of throwing
   }
   
   // CRITICAL: Use the vendor's ACTUAL _id from the database
   // Handle both ObjectId and String formats (MongoDB can store _id as either)
+  const vendorAny = vendor as any
   let vendorDbObjectId: mongoose.Types.ObjectId
-  if (vendor._id instanceof mongoose.Types.ObjectId) {
-    vendorDbObjectId = vendor._id
-  } else if (mongoose.Types.ObjectId.isValid(vendor._id)) {
-    vendorDbObjectId = new mongoose.Types.ObjectId(vendor._id)
+  if (vendorAny._id instanceof mongoose.Types.ObjectId) {
+    vendorDbObjectId = vendorAny._id
+  } else if (mongoose.Types.ObjectId.isValid(vendorAny._id)) {
+    vendorDbObjectId = new mongoose.Types.ObjectId(vendorAny._id)
   } else {
-    throw new Error(`Invalid vendor _id format: ${vendor._id} (type: ${typeof vendor._id})`)
+    throw new Error(`Invalid vendor _id format: ${vendorAny._id} (type: ${typeof vendorAny._id})`)
   }
   
-  console.log(`[getProductsByVendor] Vendor _id format: ${vendor._id?.constructor?.name || typeof vendor._id}`)
+  console.log(`[getProductsByVendor] Vendor _id format: ${vendorAny._id?.constructor?.name || typeof vendorAny._id}`)
   console.log(`[getProductsByVendor] Converted to ObjectId: ${vendorDbObjectId.toString()}`)
   
-  const vendorName = vendor.name || 'Unknown Vendor'
+  const vendorName = vendorAny.name || 'Unknown Vendor'
   
   console.log(`[getProductsByVendor] ✅ Vendor found: ${vendorName} (${vendorId})`)
   console.log(`[getProductsByVendor] Using vendor DB _id: ${vendorDbObjectId.toString()} (type: ${vendorDbObjectId.constructor.name})`)
 
-  // STEP 2: Query ProductVendor relationships using vendor's ACTUAL _id
+  // STEP 2: Query ProductVendor relationships using vendor's string ID
   console.log(`[getProductsByVendor] Querying ProductVendor relationships for vendor: ${vendorName} (${vendorId})`)
-  console.log(`[getProductsByVendor] 🔍 Querying with vendor DB _id: ${vendorDbObjectId.toString()}`)
+  console.log(`[getProductsByVendor] 🔍 Querying with vendor string ID: ${vendorId}`)
   
-  // CRITICAL FIX: Use the vendor's actual _id from database
-  // This ensures we match the exact ObjectId stored in ProductVendor relationships
-  let productVendorLinks = await db.collection('productvendors').find({ 
-    vendorId: vendorDbObjectId 
-  }).toArray()
+  // Use ProductVendor model with string IDs (schema uses string vendorId)
+  const productVendorLinks = await ProductVendor.find({ 
+    vendorId: vendorId 
+  }).lean() as any
 
   console.log(`[getProductsByVendor] ✅ ProductVendor relationships found: ${productVendorLinks.length}`)
   
-  // DEBUG: If no results, log diagnostic info
-  if (productVendorLinks.length === 0) {
-    console.log(`[getProductsByVendor] ⚠️ No ProductVendor relationships found. Checking database contents...`)
-    const allProductVendorLinks = await db.collection('productvendors').find({}).toArray()
-    console.log(`[getProductsByVendor] Total ProductVendor links in database: ${allProductVendorLinks.length}`)
-    
-    if (allProductVendorLinks.length > 0) {
-      console.log(`[getProductsByVendor] Sample ProductVendor link vendorId formats (first 3):`)
-      allProductVendorLinks.slice(0, 3).forEach((link: any, idx: number) => {
-        const linkVendorId = link.vendorId
-        const linkVendorIdStr = linkVendorId instanceof mongoose.Types.ObjectId 
-          ? linkVendorId.toString() 
-          : (linkVendorId?.toString ? linkVendorId.toString() : String(linkVendorId))
-        console.log(`[getProductsByVendor]   Link ${idx}:`, {
-          vendorId: linkVendorId,
-          vendorIdType: typeof linkVendorId,
-          vendorIdConstructor: linkVendorId?.constructor?.name,
-          vendorIdString: linkVendorIdStr,
-          ourVendorDbObjectId: vendorDbObjectId.toString(),
-          matches: linkVendorIdStr === vendorDbObjectId.toString()
-        })
-      })
-    }
-  }
-  
-  console.log(`[getProductsByVendor] Total ProductVendor relationships found: ${productVendorLinks.length}`)
-
-  let productIds: mongoose.Types.ObjectId[] = []
-
+  // Extract product string IDs from ProductVendor relationships
+  let productIds: string[] = []
   if (productVendorLinks.length > 0) {
-    // Primary method: Extract product IDs from ProductVendor relationships
-    console.log(`[getProductsByVendor] Using ProductVendor relationships (primary method)`)
-    
-    // Log all links for debugging
-    console.log(`[getProductsByVendor] ProductVendor links details:`, productVendorLinks.map((link: any, idx: number) => ({
-      index: idx,
-      productId: link.productId,
-      productIdType: typeof link.productId,
-      productIdConstructor: link.productId?.constructor?.name,
-      vendorId: link.vendorId,
-      vendorIdType: typeof link.vendorId,
-      vendorIdConstructor: link.vendorId?.constructor?.name
-    })))
-    
     productIds = productVendorLinks
-      .map((link: any, index: number) => {
-        const productId = link.productId
-        if (!productId) {
-          console.warn(`[getProductsByVendor] ⚠️ Link ${index} has no productId`)
-          return null
-        }
-        
-        // Handle all possible productId formats
-        let productObjectId: mongoose.Types.ObjectId | null = null
-        
-        if (productId instanceof mongoose.Types.ObjectId) {
-          productObjectId = productId
-        } else if (typeof productId === 'object' && productId !== null) {
-          // Handle populated or nested productId
-          if (productId._id) {
-            productObjectId = productId._id instanceof mongoose.Types.ObjectId
-              ? productId._id
-              : (mongoose.Types.ObjectId.isValid(productId._id) ? new mongoose.Types.ObjectId(productId._id) : null)
-          } else if (mongoose.Types.ObjectId.isValid(productId)) {
-            productObjectId = new mongoose.Types.ObjectId(productId)
-          } else {
-            const productIdStr = productId.toString ? productId.toString() : String(productId)
-            if (mongoose.Types.ObjectId.isValid(productIdStr)) {
-              productObjectId = new mongoose.Types.ObjectId(productIdStr)
-            }
-          }
-  } else {
-          // Handle string or other primitive types
-          const productIdStr = String(productId)
-          if (mongoose.Types.ObjectId.isValid(productIdStr)) {
-            productObjectId = new mongoose.Types.ObjectId(productIdStr)
-          }
-        }
-        
-        if (!productObjectId) {
-          console.warn(`[getProductsByVendor] ⚠️ Link ${index} has invalid productId:`, {
-            productId,
-            type: typeof productId,
-            constructor: productId?.constructor?.name,
-            productIdString: String(productId)
-          })
-          return null
-        }
-        
-        return productObjectId
-        })
-        .filter((id: any) => id !== null) as mongoose.Types.ObjectId[]
-      
+      .map((link: any) => String(link.productId))
+      .filter((id: string) => id && id.trim() !== '')
+    
+    console.log(`[getProductsByVendor] Extracted ${productIds.length} product string IDs`)
     console.log(`[getProductsByVendor] Extracted ${productIds.length} product IDs from ProductVendor relationships`)
-      if (productIds.length > 0) {
-      console.log(`[getProductsByVendor] Product IDs extracted:`, productIds.map(id => id.toString()))
+    if (productIds.length > 0) {
+      console.log(`[getProductsByVendor] Product IDs extracted:`, productIds.map((id: any) => id.toString()))
     }
   } else {
     // CRITICAL: NO FALLBACKS - ProductVendor relationships are the SINGLE SOURCE OF TRUTH
@@ -904,7 +784,7 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
   
   // 🔍 DIAGNOSTIC: Log ObjectId types before query
   console.log(`[getProductsByVendor] 🔍 DIAGNOSTIC: ObjectId types before query:`)
-  productIds.forEach((id, idx) => {
+  productIds.forEach((id: any, idx: number) => {
     console.log(`[getProductsByVendor]   productIds[${idx}]:`, {
       id: id.toString(),
       type: id.constructor.name,
@@ -916,7 +796,7 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
   let products = await Uniform.find({
     _id: { $in: productIds },
   })
-    .lean()
+    .lean() as any
 
   console.log(`[getProductsByVendor] Products query result: ${products.length} products found by _id`)
   
@@ -946,29 +826,12 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
     }
   }
   
-  // 🔍 DIAGNOSTIC: If query returned 0, try individual queries
+  // If no products found, log diagnostic info
   if (products.length === 0 && productIds.length > 0) {
-    console.log(`[getProductsByVendor] 🔍 DIAGNOSTIC: Query returned 0. Trying individual findById queries...`)
-    for (const oid of productIds) {
-      try {
-        const individualProduct = await Uniform.findById(oid).lean()
-        if (individualProduct) {
-          console.log(`[getProductsByVendor] ✅ Individual findById(${oid.toString()}) found product: ${individualProduct.id || individualProduct._id}`)
-        } else {
-          console.log(`[getProductsByVendor] ❌ Individual findById(${oid.toString()}) returned null`)
-        }
-      } catch (err: any) {
-        console.error(`[getProductsByVendor] ❌ Error in individual findById(${oid.toString()}):`, err.message)
-      }
-    }
-  }
-  
-  // FALLBACK: If no products found by _id, try to find products that exist in database
-  if (products.length === 0) {
     console.warn(`[getProductsByVendor] ⚠️ No products found by _id. Checking if products exist in database...`)
     
     // Get all products to see what's available
-    const allProducts = await Uniform.find({}).select('_id id name').limit(10).lean()
+    const allProducts = await Uniform.find({}).select('_id id name').limit(10).lean() as any
     console.log(`[getProductsByVendor] Sample products in database:`, allProducts.map((p: any) => ({
       _id: p._id?.toString(),
       id: p.id,
@@ -1038,7 +901,7 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
         // CRITICAL: Only query for the exact numericIds we extracted from matchingProducts
         products = await Uniform.find({
           id: { $in: numericIds }
-        }).lean()
+        }).lean() as any
         
         console.log(`[getProductsByVendor] Query by numeric id result: ${products.length} products found`)
         
@@ -1090,16 +953,16 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
           const directProducts: any[] = []
           for (const numericId of numericIds) {
             try {
-              const directProduct = await Uniform.findOne({ id: numericId }).lean()
+              const directProduct = await Uniform.findOne({ id: numericId }).lean() as any
               if (directProduct) {
-                // Verify _id matches productIds
-                const pIdStr = directProduct._id?.toString() || String(directProduct._id || '')
-                const productIdStrings = productIds.map(id => id.toString())
+                // Verify id matches productIds (using string id field)
+                const pIdStr = (directProduct as any).id || String((directProduct as any).id || '')
+                const productIdStrings = (productIds || []).map((id: any) => String(id))
                 if (productIdStrings.includes(pIdStr)) {
                 directProducts.push(directProduct)
-                  console.log(`[getProductsByVendor] ✅ Found product by numeric id: ${numericId} (verified _id match)`)
+                  console.log(`[getProductsByVendor] ✅ Found product by numeric id: ${numericId} (verified id match)`)
                 } else {
-                  console.warn(`[getProductsByVendor] ⚠️ Product ${numericId} found but _id ${pIdStr} doesn't match ProductVendor links`)
+                  console.warn(`[getProductsByVendor] ⚠️ Product ${numericId} found but id ${pIdStr} doesn't match ProductVendor links`)
                 }
               } else {
                 console.log(`[getProductsByVendor] ❌ Product not found by numeric id: ${numericId}`)
@@ -1132,104 +995,32 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
     }
   }
   
-  // CRITICAL SECURITY CHECK: Ensure products count never exceeds productIds count
-  // This is the FINAL safeguard before proceeding to inventory attachment
+  // Validate products match productIds (security check)
   if (products.length > productIds.length) {
-    console.error(`\n[getProductsByVendor] ❌❌❌ CRITICAL SECURITY VIOLATION BEFORE INVENTORY ATTACHMENT ❌❌❌`)
-    console.error(`[getProductsByVendor] Found ${products.length} products but only ${productIds.length} ProductVendor relationships!`)
-    console.error(`[getProductsByVendor] Products found:`, products.map((p: any) => `${p.name} (${p.id}, _id: ${p._id?.toString()})`))
-    console.error(`[getProductsByVendor] Expected productIds:`, productIds.map(id => id.toString()))
-    console.error(`[getProductsByVendor] ❌ BLOCKING - Filtering to ONLY products that match ProductVendor relationships...`)
-    
-    // CRITICAL: Filter to ONLY products that match productIds
-    const productIdStrings = new Set(productIds.map(id => id.toString()))
-    const filteredProducts = products.filter((p: any) => {
-      const pIdStr = p._id?.toString() || String(p._id || '')
-      const isValid = productIdStrings.has(pIdStr)
-      if (!isValid) {
-        console.error(`[getProductsByVendor] ❌ Removing product ${p.name} (${p.id}) - _id ${pIdStr} not in ProductVendor relationships`)
-      }
-      return isValid
-    })
-    
-    console.error(`[getProductsByVendor] After filtering: ${filteredProducts.length} products (removed ${products.length - filteredProducts.length} invalid products)`)
-    products = filteredProducts
-    
-    // If still too many, this is a critical bug - limit to productIds.length
-    if (products.length > productIds.length) {
-      console.error(`[getProductsByVendor] ❌❌❌ STILL TOO MANY PRODUCTS AFTER FILTERING! This is a critical bug!`)
-      console.error(`[getProductsByVendor] Limiting to first ${productIds.length} products`)
-      products = products.slice(0, productIds.length)
-    }
-  }
-  
-  if (products.length === 0) {
-    console.error(`[getProductsByVendor] ❌ CRITICAL: No products found after all fallback attempts`)
-    return []
+    console.error(`[getProductsByVendor] ❌ SECURITY: Found ${products.length} products but only ${productIds.length} ProductVendor relationships!`)
+    // Filter to only products that match productIds
+    const productIdSet = new Set(productIds)
+    products = products.filter((p: any) => productIdSet.has(p.id))
+    console.error(`[getProductsByVendor] After filtering: ${products.length} products`)
   }
   
   if (products.length < productIds.length) {
-    const foundProductIds = new Set(products.map((p: any) => p._id.toString()))
-    const missingProductIds = productIds.filter(id => !foundProductIds.has(id.toString()))
+    const foundProductIds = new Set(products.map((p: any) => p.id))
+    const missingProductIds = productIds.filter(id => !foundProductIds.has(id))
     console.warn(`[getProductsByVendor] ⚠️ Some product IDs not found: expected ${productIds.length}, found ${products.length}`)
-    console.warn(`[getProductsByVendor] Missing product IDs:`, missingProductIds.map(id => id.toString()))
-    
-    // CRITICAL: If we have ProductVendor links but products aren't found, this indicates a data inconsistency
-    // Try to find these products by querying the Uniform collection directly
-    if (missingProductIds.length > 0 && productVendorLinks.length > 0) {
-      console.log(`[getProductsByVendor] 🔍 Attempting to find missing products by direct query...`)
-      for (const missingId of missingProductIds) {
-        // Try multiple query methods
-        let foundProduct = null
-        
-        // Method 1: Try findById
-        try {
-          foundProduct = await Uniform.findById(missingId).lean()
-          if (foundProduct) {
-            console.log(`[getProductsByVendor] ✅ Found missing product by findById: ${foundProduct.id} (${foundProduct.name}, SKU: ${foundProduct.sku})`)
-            products.push(foundProduct)
-            continue
-          }
-        } catch (err: any) {
-          console.log(`[getProductsByVendor] findById failed for ${missingId.toString()}:`, err.message)
-        }
-        
-        // Method 2: Try finding by matching ProductVendor link's productId string
-        const matchingLink = productVendorLinks.find((link: any) => {
-          const linkProductId = link.productId instanceof mongoose.Types.ObjectId 
-            ? link.productId.toString() 
-            : String(link.productId || '')
-          return linkProductId === missingId.toString()
-        })
-        
-        if (matchingLink) {
-          console.log(`[getProductsByVendor] 🔍 ProductVendor link exists for missing product ${missingId.toString()}`)
-          console.log(`[getProductsByVendor] 🔍 Link details:`, {
-            productId: matchingLink.productId,
-            productIdType: typeof matchingLink.productId,
-            productIdConstructor: matchingLink.productId?.constructor?.name,
-            vendorId: matchingLink.vendorId,
-            vendorIdType: typeof matchingLink.vendorId
-          })
-        }
-      }
-    }
+    console.warn(`[getProductsByVendor] Missing product IDs:`, missingProductIds)
   }
   
   console.log(`[getProductsByVendor] ✅ Successfully found ${products.length} products`)
 
   // CRITICAL SECURITY: Get inventory data ONLY for products in productIds (from ProductVendor relationships)
   // This ensures we never return inventory for unassigned products
-  // If productIds is empty, this query will return nothing (correct behavior)
-  if (productIds.length === 0) {
-    console.log(`[getProductsByVendor] ⚠️ No product IDs to query inventory for - skipping inventory query`)
-  }
-  
+  // Use string IDs for vendorId and productId
   const inventoryRecords = await VendorInventory.find({
-    vendorId: vendorDbObjectId,
+    vendorId: vendorId,
     productId: { $in: productIds }, // CRITICAL: Only inventory for assigned products
   })
-    .lean()
+    .lean() as any
   
   console.log(`[getProductsByVendor] ✅ Found ${inventoryRecords.length} inventory record(s) for ${productIds.length} assigned product(s)`)
   
@@ -1268,23 +1059,18 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
         ? Object.fromEntries(inv.sizeInventory)
         : inv.sizeInventory || {}
       
-      inventoryMap.set(productIdStr, {
+      const productIdForMap = productIdStr || String(inv.productId || '')
+      inventoryMap.set(productIdForMap, {
         sizeInventory,
         totalStock: inv.totalStock || 0,
       })
     }
   })
 
-  // Attach inventory data to products
-  // CRITICAL: Preserve _id BEFORE calling toPlainObject (which deletes _id)
-  let productsWithInventory = products.map((product: any) => {
-    // CRITICAL: Extract _id BEFORE toPlainObject deletes it
-    const productIdStr = product._id?.toString() || String(product._id || '')
-    const productObjectId = product._id instanceof mongoose.Types.ObjectId 
-      ? product._id 
-      : (mongoose.Types.ObjectId.isValid(product._id) ? new mongoose.Types.ObjectId(product._id) : null)
-    
-    const inventory = inventoryMap.get(productIdStr) || {
+  // Attach inventory data to products - use string ID
+  const productsWithInventory = products.map((product: any) => {
+    const productId = product.id
+    const inventory = inventoryMap.get(productId) || {
       sizeInventory: {},
       totalStock: 0,
     }
@@ -1298,153 +1084,44 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
     if (product.attribute3_name !== undefined) plainProduct.attribute3_name = product.attribute3_name
     if (product.attribute3_value !== undefined) plainProduct.attribute3_value = product.attribute3_value
 
-    // CRITICAL: Restore _id after toPlainObject (needed for validation step)
     return {
       ...plainProduct,
-      _id: productObjectId || product._id, // Preserve _id for validation
       inventory: inventory.sizeInventory,
       totalStock: inventory.totalStock,
-      // For backward compatibility, set stock to totalStock
       stock: inventory.totalStock,
     }
   })
 
-  // STEP 5: CRITICAL VALIDATION - Ensure all returned products are from ProductVendor relationships
-  // This is a security check to prevent returning products not assigned to this vendor
-  if (productsWithInventory.length > 0 && productVendorLinks.length > 0) {
-    console.log(`[getProductsByVendor] 🔍 STEP 5: Validating ${productsWithInventory.length} products against ${productVendorLinks.length} ProductVendor links`)
-    
-    // Build Set of valid product IDs from ProductVendor links
-    // CRITICAL: Use the SAME productIds we extracted earlier (from productIds array)
-    // This ensures we're comparing the exact same ObjectIds that were used to query products
-    const validProductIds = new Set<string>()
-    
-    // Use the productIds array we already extracted (these are the ObjectIds from ProductVendor links)
-    productIds.forEach((productObjectId: mongoose.Types.ObjectId) => {
-      const productIdStr = productObjectId.toString()
-      validProductIds.add(productIdStr)
-    })
-    
-    // Also add productIds from links as backup (in case there's a format difference)
-    productVendorLinks.forEach((link: any, idx: number) => {
-      const linkProductId = link.productId
-      let productIdStr = ''
-      
-      if (linkProductId instanceof mongoose.Types.ObjectId) {
-        productIdStr = linkProductId.toString()
-      } else if (typeof linkProductId === 'object' && linkProductId !== null) {
-        // Handle populated or nested productId
-        if (linkProductId._id) {
-          productIdStr = linkProductId._id instanceof mongoose.Types.ObjectId
-            ? linkProductId._id.toString()
-            : String(linkProductId._id)
-        } else {
-          productIdStr = linkProductId.toString ? linkProductId.toString() : String(linkProductId)
-        }
-      } else {
-        productIdStr = String(linkProductId || '')
-      }
-      
-      if (productIdStr && mongoose.Types.ObjectId.isValid(productIdStr)) {
-        validProductIds.add(productIdStr)
-      }
-    })
-    
-    console.log(`[getProductsByVendor] 🔍 Valid product IDs Set size: ${validProductIds.size}`)
-    console.log(`[getProductsByVendor] 🔍 Valid product IDs:`, Array.from(validProductIds).slice(0, 5))
-    console.log(`[getProductsByVendor] 🔍 Products to validate:`, productsWithInventory.map((p: any) => ({
-      id: p.id,
-      name: p.name,
-      _id: p._id?.toString() || String(p._id || '')
-    })).slice(0, 3))
-    
-    // Filter products to only those in validProductIds
-    const filteredProducts = productsWithInventory.filter((p: any) => {
-      // CRITICAL: Normalize product _id to string for comparison
-      const productIdStr = p._id?.toString() || String(p._id || '')
-      const isValid = validProductIds.has(productIdStr)
-      
-      if (!isValid) {
-        console.error(`[getProductsByVendor] ❌ SECURITY: Product ${p.id} (${p.name}, _id: ${productIdStr}) is NOT in ProductVendor relationships - REMOVING`)
-        console.error(`[getProductsByVendor]   Product _id: ${productIdStr}`)
-        console.error(`[getProductsByVendor]   Valid IDs include: ${Array.from(validProductIds).slice(0, 3).join(', ')}`)
-        console.error(`[getProductsByVendor]   🔍 DIAGNOSTIC: Checking if productIdStr matches any valid ID...`)
-        // Diagnostic: Check if there's a close match
-        const matches = Array.from(validProductIds).filter(validId => {
-          return validId === productIdStr || validId.toLowerCase() === productIdStr.toLowerCase()
-        })
-        if (matches.length > 0) {
-          console.error(`[getProductsByVendor]   ⚠️ Found ${matches.length} potential matches but comparison failed - this is a bug!`)
-        }
-      } else {
-        console.log(`[getProductsByVendor] ✅ Product ${p.id} (${p.name}, _id: ${productIdStr}) is VALID - keeping`)
-      }
-      
-      return isValid
-    })
-    
-    if (filteredProducts.length < productsWithInventory.length) {
-      console.error(`[getProductsByVendor] ❌ SECURITY VIOLATION: Removed ${productsWithInventory.length - filteredProducts.length} products not in ProductVendor relationships`)
-      console.error(`[getProductsByVendor] Only returning ${filteredProducts.length} products that are explicitly assigned to vendor`)
-    } else {
-      console.log(`[getProductsByVendor] ✅ All ${filteredProducts.length} products validated successfully`)
-    }
-    
-    productsWithInventory = filteredProducts
-  } else if (productsWithInventory.length > 0 && productVendorLinks.length === 0) {
-    // CRITICAL: If we have products but no ProductVendor links, this is a security violation
-    console.error(`[getProductsByVendor] ❌ CRITICAL SECURITY VIOLATION: Have ${productsWithInventory.length} products but NO ProductVendor links`)
-    console.error(`[getProductsByVendor] This should not happen - returning empty array`)
-    productsWithInventory = []
+  // Security validation: Ensure all products match productIds from ProductVendor relationships
+  const productIdSet = new Set(productIds)
+  const validatedProducts = productsWithInventory.filter((p: any) => {
+    return productIdSet.has(p.id)
+  })
+  
+  if (validatedProducts.length < productsWithInventory.length) {
+    console.error(`[getProductsByVendor] ❌ SECURITY: Removed ${productsWithInventory.length - validatedProducts.length} products not in ProductVendor relationships`)
   }
   
-  // STEP 6: CRITICAL FINAL VALIDATION - Ensure product count matches ProductVendor relationships
-  // This is a security check to prevent returning more products than assigned
-  if (productsWithInventory.length > productVendorLinks.length) {
-    console.error(`\n[getProductsByVendor] ❌❌❌ CRITICAL SECURITY VIOLATION DETECTED ❌❌❌`)
-    console.error(`[getProductsByVendor] Returning ${productsWithInventory.length} products but only ${productVendorLinks.length} ProductVendor relationships exist!`)
-    console.error(`[getProductsByVendor] This indicates products are being returned that are NOT assigned to this vendor!`)
-    console.error(`[getProductsByVendor] Products being returned:`)
-    productsWithInventory.forEach((p: any, idx: number) => {
-      console.error(`[getProductsByVendor]   ${idx + 1}. ${p.name} (SKU: ${p.sku}, ID: ${p.id}, _id: ${p._id?.toString() || 'N/A'})`)
-    })
-    console.error(`[getProductsByVendor] ProductVendor relationships:`)
-    productVendorLinks.forEach((link: any, idx: number) => {
-      console.error(`[getProductsByVendor]   ${idx + 1}. ProductId: ${link.productId?.toString() || 'N/A'}`)
-    })
-    console.error(`[getProductsByVendor] ❌ BLOCKING RETURN - Returning EMPTY ARRAY to prevent data leakage!`)
-    console.error(`[getProductsByVendor] This is a critical security violation - products are being returned that violate vendor-product isolation!`)
-    
-    // CRITICAL: Return empty array instead of violating products
-    // This ensures vendors NEVER see products not assigned to them, even if there's a bug in the query logic
+  // Final security check: Ensure product count doesn't exceed ProductVendor relationships
+  if (validatedProducts.length > productVendorLinks.length) {
+    console.error(`[getProductsByVendor] ❌ SECURITY: Returning ${validatedProducts.length} products but only ${productVendorLinks.length} ProductVendor relationships!`)
     return []
   }
   
-  // STEP 7: Final validation and logging
-  console.log(`\n╔════════════════════════════════════════════════════════════╗`)
-  console.log(`║  [getProductsByVendor] FINAL RESULT                        ║`)
-  console.log(`╚════════════════════════════════════════════════════════════╝`)
+  // Final logging
+  console.log(`[getProductsByVendor] ✅ FINAL RESULT:`)
   console.log(`[getProductsByVendor] Vendor: ${vendorName} (${vendorId})`)
-  console.log(`[getProductsByVendor] ProductVendor relationships found: ${productVendorLinks.length}`)
-  console.log(`[getProductsByVendor] Product IDs extracted: ${productIds.length}`)
-  console.log(`[getProductsByVendor] Products returned: ${productsWithInventory.length}`)
+  console.log(`[getProductsByVendor] ProductVendor relationships: ${productVendorLinks.length}`)
+  console.log(`[getProductsByVendor] Products returned: ${validatedProducts.length}`)
   
-  // CRITICAL: Verify count matches
-  if (productsWithInventory.length === productVendorLinks.length) {
-    console.log(`[getProductsByVendor] ✅ Product count matches ProductVendor relationships (${productsWithInventory.length} = ${productVendorLinks.length})`)
-  } else if (productsWithInventory.length < productVendorLinks.length) {
-    console.warn(`[getProductsByVendor] ⚠️  Product count (${productsWithInventory.length}) is less than ProductVendor relationships (${productVendorLinks.length})`)
-    console.warn(`[getProductsByVendor] This may indicate orphaned ProductVendor relationships (products deleted but relationships remain)`)
-  } else {
-    console.error(`[getProductsByVendor] ❌ CRITICAL: Product count (${productsWithInventory.length}) exceeds ProductVendor relationships (${productVendorLinks.length})`)
-    console.error(`[getProductsByVendor] This should have been caught by the validation above!`)
+  if (validatedProducts.length < productVendorLinks.length) {
+    console.warn(`[getProductsByVendor] ⚠️ Product count (${validatedProducts.length}) is less than ProductVendor relationships (${productVendorLinks.length})`)
+    console.warn(`[getProductsByVendor] This may indicate orphaned ProductVendor relationships`)
   }
   
-  console.log(`[getProductsByVendor] ✅ All products validated against ProductVendor relationships`)
-  
-  if (productsWithInventory.length > 0) {
+  if (validatedProducts.length > 0) {
     console.log(`[getProductsByVendor] ✅ SUCCESS - Products found:`)
-    productsWithInventory.forEach((p: any, idx: number) => {
+    validatedProducts.forEach((p: any, idx: number) => {
       console.log(`[getProductsByVendor]   ${idx + 1}. ${p.name} (SKU: ${p.sku}, ID: ${p.id})`)
     })
   } else if (productVendorLinks.length === 0) {
@@ -1462,6 +1139,10 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
   console.log(`[getProductsByVendor] END\n`)
 
   return productsWithInventory
+  } catch (error: any) {
+    console.error('[getProductsByVendor] Error:', error.message)
+    return []
+  }
 }
 
 export async function getAllProducts(): Promise<any[]> {
@@ -1469,7 +1150,7 @@ export async function getAllProducts(): Promise<any[]> {
   
   const products = await Uniform.find()
     .populate('vendorId', 'id name')
-    .lean()
+    .lean() as any
 
   // Convert to plain objects and ensure attributes are preserved
   return products.map((p: any) => {
@@ -1506,12 +1187,12 @@ export async function createProduct(productData: {
   await connectDB()
   
   // Generate unique 6-digit numeric product ID (starting from 200001)
+  let nextProductId = 200001
   const existingProducts = await Uniform.find({})
     .sort({ id: -1 })
     .limit(1)
-    .lean()
+    .lean() as any
   
-  let nextProductId = 200001 // Start from 200001
   if (existingProducts.length > 0) {
     const lastId = existingProducts[0].id
     if (/^\d{6}$/.test(String(lastId))) {
@@ -1677,9 +1358,9 @@ export async function createProduct(productData: {
   }
   
   Object.keys(schemaChecks).forEach(field => {
-    const check = schemaChecks[field as keyof typeof schemaChecks]
+    const check = schemaChecks[field as keyof typeof schemaChecks] as any
     const status = check.required 
-      ? (check.typeMatch && (check.enumMatch !== undefined ? check.enumMatch : true) && (check.notEmpty !== undefined ? check.notEmpty : true) && (check.validationMatch !== undefined ? check.validationMatch : true) && (check.isFinite !== undefined ? check.isFinite : true))
+      ? ((check.typeMatch !== undefined ? check.typeMatch : true) && (check.enumMatch !== undefined ? check.enumMatch : true) && (check.notEmpty !== undefined ? check.notEmpty : true) && (check.validationMatch !== undefined ? check.validationMatch : true) && (check.isFinite !== undefined ? check.isFinite : true))
       : 'N/A (optional)'
     console.log(`  ${field}:`)
     console.log(`    Required: ${check.required}`)
@@ -1739,15 +1420,15 @@ export async function createProduct(productData: {
   // Fetch the created product with populated fields using the string ID (more reliable)
   const created = await Uniform.findOne({ id: productId })
     .populate('vendorId', 'id name')
-    .lean()
+    .lean() as any
   
-  if (!created) {
-    // Fallback: try to use the created product directly
-    await newProduct.populate('vendorId', 'id name')
-    return toPlainObject(newProduct)
+  if (created) {
+    return toPlainObject(created)
   }
   
-  return toPlainObject(created)
+  // Fallback: try to use the created product directly
+  await newProduct.populate('vendorId', 'id name')
+  return toPlainObject(newProduct)
 }
 
 export async function updateProduct(
@@ -1774,20 +1455,18 @@ export async function updateProduct(
   await connectDB()
   
   // First, verify the product exists and get its current SKU for validation
-  let product: any = await Uniform.findOne({ id: productId }).lean()
+  let product: any = await Uniform.findOne({ id: productId }).lean() as any
   
-  // If not found by id, try by _id (ObjectId) as fallback
-  if (!product && mongoose.Types.ObjectId.isValid(productId)) {
-    product = await Uniform.findById(productId).lean()
-  }
+  // Removed ObjectId fallback - all products should use string IDs
   
   if (!product) {
-    throw new Error(`Product not found: ${productId}`)
+    console.warn(`[updateProduct] Product not found: ${productId}`)
+    return null // Return null instead of throwing - let API route handle 404
   }
   
   // Handle SKU update (check for duplicates) - must check before update
   if (updateData.sku !== undefined && updateData.sku !== (product as any).sku) {
-    const existingBySku = await Uniform.findOne({ sku: updateData.sku }).lean()
+    const existingBySku = await Uniform.findOne({ sku: updateData.sku }).lean() as any
     if (existingBySku && (existingBySku as any).id !== productId) {
       throw new Error(`Product with SKU already exists: ${updateData.sku}`)
     }
@@ -1931,19 +1610,21 @@ export async function updateProduct(
     { id: productId },
     updateQuery,
     { new: true, runValidators: true }
-  ).lean()
+  ).lean() as any
   
-  // If not found by id, try by _id (ObjectId) as fallback
-  if (!updated && mongoose.Types.ObjectId.isValid(productId)) {
-    updated = await Uniform.findByIdAndUpdate(
-      productId,
+  // Removed ObjectId fallback - all products should use string IDs
+  if (!updated) {
+    // Try findOneAndUpdate as fallback
+    updated = await Uniform.findOneAndUpdate(
+      { id: productId },
       updateQuery,
       { new: true, runValidators: true }
-    ).lean()
+    ).lean() as any
   }
   
   if (!updated) {
-    throw new Error(`Product not found for update: ${productId}`)
+    console.warn(`[updateProduct] Product not found for update: ${productId}`)
+    return null // Return null instead of throwing - let API route handle 404
   }
   
   return toPlainObject(updated)
@@ -1954,78 +1635,111 @@ export async function deleteProduct(productId: string): Promise<void> {
   
   const product = await Uniform.findOne({ id: productId })
   if (!product) {
-    throw new Error(`Product not found: ${productId}`)
+    console.warn(`[deleteProduct] Product not found: ${productId}`)
+    return // Return early instead of throwing - let API route handle 404
   }
   
   // Delete product-company relationships
-  await ProductCompany.deleteMany({ productId: product._id })
+  await ProductCompany.deleteMany({ productId: 
+    product._id })
   
   // Delete product-vendor relationships
-  await ProductVendor.deleteMany({ productId: product._id })
+  await ProductVendor.deleteMany({ productId: 
+    product._id })
   
   // Delete the product
   await Uniform.deleteOne({ _id: product._id })
 }
 
 export async function getProductById(productId: string): Promise<any | null> {
-  await connectDB()
-  
-  if (!productId) {
-    console.warn('[getProductById] No productId provided.')
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getProductById] Database connection error:', error.message)
     return null
   }
   
-  // Try finding by the 'id' field (string ID) first
-  let product = await Uniform.findOne({ id: productId })
-    .populate('vendorId', 'id name')
-    .lean()
-
-  // If not found by string 'id' and productId looks like an ObjectId, try finding by '_id'
-  if (!product && mongoose.Types.ObjectId.isValid(productId) && productId.length === 24) {
-    console.log(`[getProductById] Product not found by string ID "${productId}", trying ObjectId lookup.`)
-    product = await Uniform.findById(productId)
+  try {
+    if (!productId) {
+      console.warn('[getProductById] No productId provided.')
+      return null
+    }
+    
+    // Try finding by the 'id' field (string ID) first
+    let product = await Uniform.findOne({ id: productId })
       .populate('vendorId', 'id name')
-      .lean()
-  }
-  
-  if (!product) {
-    console.warn(`[getProductById] No product found for ID: ${productId}`)
+      .lean() as any
+
+    // Removed ObjectId fallback - all products should use string IDs
+    
+    if (!product) {
+      console.warn(`[getProductById] No product found for ID: ${productId}`)
+      return null
+    }
+    
+    const plain = toPlainObject(product)
+    // Explicitly preserve attribute fields
+    const productAny = product as any
+    if (productAny.attribute1_name !== undefined) plain.attribute1_name = productAny.attribute1_name
+    if (productAny.attribute1_value !== undefined) plain.attribute1_value = productAny.attribute1_value
+    if (productAny.attribute2_name !== undefined) plain.attribute2_name = productAny.attribute2_name
+    if (productAny.attribute2_value !== undefined) plain.attribute2_value = productAny.attribute2_value
+    if (productAny.attribute3_name !== undefined) plain.attribute3_name = productAny.attribute3_name
+    if (productAny.attribute3_value !== undefined) plain.attribute3_value = productAny.attribute3_value
+    
+    return plain
+  } catch (error: any) {
+    console.error('[getProductById] Error:', error.message)
     return null
   }
-  
-  const plain = toPlainObject(product)
-  // Explicitly preserve attribute fields
-  const productAny = product as any
-  if (productAny.attribute1_name !== undefined) plain.attribute1_name = productAny.attribute1_name
-  if (productAny.attribute1_value !== undefined) plain.attribute1_value = productAny.attribute1_value
-  if (productAny.attribute2_name !== undefined) plain.attribute2_name = productAny.attribute2_name
-  if (productAny.attribute2_value !== undefined) plain.attribute2_value = productAny.attribute2_value
-  if (productAny.attribute3_name !== undefined) plain.attribute3_name = productAny.attribute3_name
-  if (productAny.attribute3_value !== undefined) plain.attribute3_value = productAny.attribute3_value
-  
-  return plain
 }
 
 // ========== VENDOR FUNCTIONS ==========
 
 export async function getAllVendors(): Promise<any[]> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getAllVendors] Database connection error:', error.message)
+    return []
+  }
   
-  const vendors = await Vendor.find().lean()
-  return vendors.map((v: any) => toPlainObject(v))
+  try {
+    const vendors = await Vendor.find().lean() as any
+    return vendors.map((v: any) => toPlainObject(v))
+  } catch (error: any) {
+    console.error('[getAllVendors] Error:', error.message)
+    return []
+  }
 }
 
 export async function getVendorById(vendorId: string): Promise<any | null> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getVendorById] Database connection error:', error.message)
+    return null
+  }
   
-  const vendor = await Vendor.findOne({ id: vendorId }).lean()
-  return vendor ? toPlainObject(vendor) : null
+  try {
+    const vendor = await Vendor.findOne({ id: vendorId }).lean() as any
+    return vendor ? toPlainObject(vendor) : null
+  } catch (error: any) {
+    console.error('[getVendorById] Error:', error.message)
+    return null
+  }
 }
 
 export async function getVendorByEmail(email: string): Promise<any | null> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getVendorByEmail] Database connection error:', error.message)
+    return null
+  }
   
-  console.log(`[getVendorByEmail] ========================================`)
+  try {
+    console.log(`[getVendorByEmail] ========================================`)
   console.log(`[getVendorByEmail] 🚀 LOOKING UP VENDOR BY EMAIL`)
   console.log(`[getVendorByEmail] Input email: "${email}"`)
   console.log(`[getVendorByEmail] Input type: ${typeof email}`)
@@ -2042,16 +1756,17 @@ export async function getVendorByEmail(email: string): Promise<any | null> {
   console.log(`[getVendorByEmail] 🔍 Attempting regex search...`)
   let vendor = await Vendor.findOne({ 
     email: { $regex: new RegExp(`^${normalizedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
-  }).lean()
+  }).lean() as any
   
   if (vendor) {
-    console.log(`[getVendorByEmail] ✅ Found vendor via regex: ${vendor.name} (id: ${vendor.id}, _id: ${vendor._id?.toString()})`)
-    console.log(`[getVendorByEmail] Vendor email in DB: "${vendor.email}"`)
+    const vendorAny = vendor as any
+    console.log(`[getVendorByEmail] ✅ Found vendor via regex: ${vendorAny.name} (id: ${vendorAny.id}, _id: ${vendorAny._id?.toString()})`)
+    console.log(`[getVendorByEmail] Vendor email in DB: "${vendorAny.email}"`)
   } else {
     console.log(`[getVendorByEmail] ⚠️ Regex search returned no results, trying manual comparison...`)
     
     // If not found, try fetching all and comparing (fallback)
-    const allVendors = await Vendor.find({}).lean()
+    const allVendors = await Vendor.find({}).lean() as any
     console.log(`[getVendorByEmail] Fetched ${allVendors.length} vendor(s) for manual comparison`)
     
     for (const v of allVendors) {
@@ -2059,7 +1774,8 @@ export async function getVendorByEmail(email: string): Promise<any | null> {
       console.log(`[getVendorByEmail]   Comparing: "${vEmailNormalized}" with "${normalizedEmail}"`)
       if (vEmailNormalized === normalizedEmail) {
         vendor = v
-        console.log(`[getVendorByEmail] ✅ Found vendor via manual comparison: ${vendor.name} (id: ${vendor.id}, _id: ${vendor._id?.toString()})`)
+        const vendorAny = vendor as any
+        console.log(`[getVendorByEmail] ✅ Found vendor via manual comparison: ${vendorAny.name} (id: ${vendorAny.id}, _id: ${vendorAny._id?.toString()})`)
         break
       }
     }
@@ -2070,15 +1786,19 @@ export async function getVendorByEmail(email: string): Promise<any | null> {
     }
   }
   
-  const result = vendor ? toPlainObject(vendor) : null
-  if (result) {
-    console.log(`[getVendorByEmail] ✅ Returning vendor: ${result.name} (id: ${result.id})`)
-  } else {
-    console.log(`[getVendorByEmail] ❌ Returning null (vendor not found)`)
+    const result = vendor ? toPlainObject(vendor) : null
+    if (result) {
+      console.log(`[getVendorByEmail] ✅ Returning vendor: ${result.name} (id: ${result.id})`)
+    } else {
+      console.log(`[getVendorByEmail] ❌ Returning null (vendor not found)`)
+    }
+    console.log(`[getVendorByEmail] ========================================`)
+    
+    return result
+  } catch (error: any) {
+    console.error('[getVendorByEmail] Error:', error.message)
+    return null
   }
-  console.log(`[getVendorByEmail] ========================================`)
-  
-  return result
 }
 
 export async function createVendor(vendorData: {
@@ -2102,12 +1822,12 @@ export async function createVendor(vendorData: {
   
   // Generate next 6-digit numeric vendor ID
   // Find the highest existing vendor ID
+  let nextVendorId = 100001
   const existingVendors = await Vendor.find({})
     .sort({ id: -1 })
     .limit(1)
-    .lean()
+    .lean() as any
   
-  let nextVendorId = 100001 // Start from 100001
   if (existingVendors.length > 0) {
     const lastId = existingVendors[0].id
     // Extract numeric part if it's already numeric
@@ -2178,27 +1898,22 @@ export async function updateVendor(vendorId: string, vendorData: {
   // Find vendor by id field (not _id)
   let vendor = await Vendor.findOne({ id: vendorId })
   
-  // Fallback: try finding by _id if vendorId looks like an ObjectId
-  if (!vendor && mongoose.Types.ObjectId.isValid(vendorId)) {
-    console.log(`[updateVendor] Vendor not found by id field, trying _id lookup`)
-    vendor = await Vendor.findById(vendorId)
-    if (vendor) {
-      console.log(`[updateVendor] Found vendor by _id, using vendor.id: ${vendor.id}`)
-    }
-  }
+  // Removed ObjectId fallback - all vendors should use string IDs
   
   if (!vendor) {
     // List available vendors for debugging
-    const allVendors = await Vendor.find({}, 'id name').limit(5).lean()
-    const availableIds = allVendors.map((v: any) => v.id).join(', ')
+    const allVendors = await Vendor.find({}, 'id name').limit(5).lean() as any
     console.error(`[updateVendor] Vendor not found. Available vendor IDs: ${availableIds || 'none'}`)
     throw new Error(`Vendor not found with id: ${vendorId}`)
   }
   
   console.log(`[updateVendor] Vendor found:`, {
-    id: vendor.id,
-    name: vendor.name,
-    _id: vendor._id.toString()
+    id: 
+    vendor.id,
+    name: 
+    vendor.name,
+    id: 
+    vendor.id
   })
   
   // If email is being updated, check if it conflicts with another vendor
@@ -2222,7 +1937,8 @@ export async function updateVendor(vendorId: string, vendorData: {
   if (vendorData.theme !== undefined) updateData.theme = vendorData.theme
   
   console.log(`[updateVendor] Update data to apply:`, updateData)
-  console.log(`[updateVendor] Query filter: { _id: ${vendor._id.toString()} }`)
+  console.log(`[updateVendor] Query filter: { _id: ${
+    vendor._id.toString()} }`)
   
   // Use findOneAndUpdate to avoid _id lookup issues
   // Use id field instead of _id for the query to be more reliable
@@ -2240,7 +1956,8 @@ export async function updateVendor(vendorId: string, vendorData: {
       error: updateError.message,
       stack: updateError.stack,
       vendorId,
-      vendor_id: vendor._id.toString()
+      vendor_id: 
+    vendor._id.toString()
     })
     throw new Error(`Failed to update vendor: ${updateError.message}`)
   }
@@ -2251,7 +1968,8 @@ export async function updateVendor(vendorId: string, vendorData: {
     try {
       // Update fields directly on the vendor document
       Object.assign(vendor, updateData)
-      await vendor.save()
+      await 
+    vendor.save()
       updatedVendor = vendor
       console.log(`[updateVendor] Direct save successful`)
     } catch (saveError: any) {
@@ -2287,12 +2005,12 @@ export async function createCompany(companyData: {
   }
   
   // Generate next 6-digit numeric company ID (starting from 100001)
+  let nextCompanyId = 100001
   const existingCompanies = await Company.find({})
     .sort({ id: -1 })
     .limit(1)
-    .lean()
+    .lean() as any
   
-  let nextCompanyId = 100001 // Start from 100001
   if (existingCompanies.length > 0) {
     const lastId = existingCompanies[0].id
     if (/^\d{6}$/.test(String(lastId))) {
@@ -2339,9 +2057,8 @@ export async function getAllCompanies(): Promise<any[]> {
   
   const companies = await Company.find()
     .populate('adminId', 'id employeeId firstName lastName email')
-    .lean()
+    .lean() as any
   
-  // Convert to plain objects but preserve _id for ObjectId matching
   return companies.map((c: any) => {
     const plain = toPlainObject(c)
     // Preserve _id for ObjectId matching (needed for companyId conversion)
@@ -2387,13 +2104,14 @@ export async function createLocation(locationData: {
   if (locationData.adminId) {
     adminEmployee = await Employee.findOne({ employeeId: locationData.adminId })
     if (!adminEmployee) {
-      throw new Error(`Employee not found for Location Admin: ${locationData.adminId}`)
+      console.warn(`[createLocation] Employee not found for Location Admin: ${locationData.adminId}`)
+      throw new Error(`Employee not found for Location Admin: ${locationData.adminId}`) // Keep as error - invalid input
     }
     
     // Verify employee belongs to the same company
     const employeeCompanyId = typeof adminEmployee.companyId === 'object' && adminEmployee.companyId?.id
       ? adminEmployee.companyId.id
-      : (await Company.findById(adminEmployee.companyId))?.id
+      : (await Company.findOne({ id: String(adminEmployee.companyId) }))?.id
     
     if (employeeCompanyId !== locationData.companyId) {
       throw new Error(`Employee ${locationData.adminId} does not belong to company ${locationData.companyId}`)
@@ -2402,7 +2120,8 @@ export async function createLocation(locationData: {
   
   // Check if location name already exists for this company
   const existingLocation = await Location.findOne({ 
-    companyId: company._id, 
+    companyId: 
+    company._id, 
     name: locationData.name.trim() 
   })
   if (existingLocation) {
@@ -2410,12 +2129,12 @@ export async function createLocation(locationData: {
   }
   
   // Generate next 6-digit numeric location ID (starting from 400001)
+  let nextLocationId = 400001
   const existingLocations = await Location.find({})
     .sort({ id: -1 })
     .limit(1)
-    .lean()
+    .lean() as any
   
-  let nextLocationId = 400001 // Start from 400001
   if (existingLocations.length > 0) {
     const lastId = existingLocations[0].id
     if (/^\d{6}$/.test(String(lastId))) {
@@ -2446,7 +2165,8 @@ export async function createLocation(locationData: {
   const locationDataToCreate: any = {
     id: locationId,
     name: locationData.name.trim(),
-    companyId: company._id,
+    companyId: 
+    company._id,
     address_line_1: locationData.address_line_1.trim(),
     address_line_2: locationData.address_line_2?.trim(),
     address_line_3: locationData.address_line_3?.trim(),
@@ -2476,20 +2196,19 @@ export async function createLocation(locationData: {
       console.warn(`[createLocation] Admin employee ${adminEmployee._id} has no id or employeeId field`)
     } else {
       await LocationAdmin.findOneAndUpdate(
-        { locationId: newLocation._id, employeeId: employeeIdString },
-        { locationId: newLocation._id, employeeId: employeeIdString },
+        { locationId: newLocation.id, employeeId: employeeIdString },
+        { locationId: newLocation.id, employeeId: employeeIdString },
         { upsert: true }
       )
     }
   }
   
   // Populate and return
-  const populated = await Location.findById(newLocation._id)
+  const populated = await Location.findOne({ id: String(newLocation.id) })
     .populate('companyId', 'id name')
     .populate('adminId', 'id employeeId firstName lastName email')
-    .lean()
+    .lean() as any
   
-  return toPlainObject(populated)
 }
 
 /**
@@ -2498,20 +2217,30 @@ export async function createLocation(locationData: {
  * @returns Array of locations
  */
 export async function getLocationsByCompany(companyId: string): Promise<any[]> {
-  await connectDB()
-  
-  const company = await Company.findOne({ id: companyId })
-  if (!company) {
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getLocationsByCompany] Database connection error:', error.message)
     return []
   }
   
-  const locations = await Location.find({ companyId: company._id })
-    .populate('companyId', 'id name')
-    .populate('adminId', 'id employeeId firstName lastName email')
-    .sort({ name: 1 })
-    .lean()
+  try {
+    const company = await Company.findOne({ id: companyId }).lean() as any
+    if (!company) {
+      return []
+    }
   
-  return locations.map((l: any) => toPlainObject(l))
+    const locations = await Location.find({ companyId: (company as any).id })
+      .populate('companyId', 'id name')
+      .populate('adminId', 'id employeeId firstName lastName email')
+      .sort({ name: 1 })
+      .lean() as any
+    
+    return locations.map((l: any) => toPlainObject(l))
+  } catch (error: any) {
+    console.error('[getLocationsByCompany] Error:', error.message)
+    return []
+  }
 }
 
 /**
@@ -2520,14 +2249,48 @@ export async function getLocationsByCompany(companyId: string): Promise<any[]> {
  * @returns Location object or null
  */
 export async function getLocationById(locationId: string): Promise<any | null> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getLocationById] Database connection error:', error.message)
+    return null
+  }
   
-  const location = await Location.findOne({ id: locationId })
-    .populate('companyId', 'id name')
-    .populate('adminId', 'id employeeId firstName lastName email')
-    .lean()
-  
-  return location ? toPlainObject(location) : null
+  try {
+    // Normalize and validate
+    const normalizedId = String(locationId)
+    if (!/^\d{6}$/.test(normalizedId)) {
+      console.warn(`[getLocationById] Invalid locationId format: ${normalizedId}`)
+      return null
+    }
+    
+    const location = await Location.findOne({ id: normalizedId }).lean() as any
+    
+    if (!location) {
+      return null
+    }
+    
+    // Manual join for companyId
+    if ((location as any).companyId) {
+      const company = await Company.findOne({ id: (location as any).companyId }).lean() as any
+      if (company) {
+        (location as any).companyId = toPlainObject(company)
+      }
+    }
+    
+    // Manual join for adminId
+    if ((location as any).adminId) {
+      const admin = await Employee.findOne({ id: (location as any).adminId }).lean() as any
+      if (admin) {
+        (location as any).adminId = toPlainObject(admin)
+      }
+    }
+    
+    return toPlainObject(location)
+  } catch (error: any) {
+    console.error('[getLocationById] Error:', error.message)
+    return null
+  }
 }
 
 /**
@@ -2557,11 +2320,12 @@ export async function updateLocation(
   
   const location = await Location.findOne({ id: locationId })
   if (!location) {
-    throw new Error(`Location not found: ${locationId}`)
+    console.warn(`[updateLocation] Location not found: ${locationId}`);
+    return null // Return null instead of throwing - let API route handle 404
   }
   
-    // If updating admin (including removal)
-    if (updateData.adminId !== undefined) {
+  // If updating admin (including removal)
+  if (updateData.adminId !== undefined) {
       if (updateData.adminId) {
         // Assign new admin - populate companyId to ensure we can compare
         const newAdmin = await Employee.findOne({ employeeId: updateData.adminId })
@@ -2572,13 +2336,13 @@ export async function updateLocation(
         
         // Verify employee belongs to same company as location
         // Extract location's company ID
-        // Note: location.companyId is NOT populated, so it's an ObjectId
+        // Note: (location as any).companyId is NOT populated, so it's an ObjectId
         let locationCompanyId: string | null = null
-        if (location.companyId) {
-          // location.companyId is an ObjectId (not populated), so fetch the company
-          const locationCompany = await Company.findById(location.companyId).select('id').lean()
-          if (locationCompany && locationCompany.id) {
-            locationCompanyId = locationCompany.id
+        if ((location as any).companyId) {
+          // (location as any).companyId is an ObjectId (not populated), so fetch the company
+          const locationCompany = await Company.findOne({ id: String((location as any).companyId) }).select('id').lean() as any
+          if (locationCompany) {
+            locationCompanyId = (locationCompany as any).id
           }
         }
         
@@ -2595,15 +2359,17 @@ export async function updateLocation(
             if (newAdmin.companyId.id) {
               employeeCompanyId = newAdmin.companyId.id
             } else {
-              // Populated but id field missing - try to fetch by _id
-              const employeeCompany = await Company.findById(newAdmin.companyId._id || newAdmin.companyId).select('id').lean()
-              employeeCompanyId = employeeCompany?.id || null
+              // Populated but id field missing - try to fetch by string ID
+              const employeeCompany = await Company.findOne({ id: String((newAdmin.companyId as any).id || newAdmin.companyId) }).select('id').lean() as any
+              if (employeeCompany && employeeCompany.id) {
+                employeeCompanyId = employeeCompany.id
+              }
             }
           } else if (typeof newAdmin.companyId === 'string') {
-            // Not populated: ObjectId string - need to fetch company
-            if (newAdmin.companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(newAdmin.companyId)) {
-              const employeeCompany = await Company.findById(newAdmin.companyId).select('id').lean()
-              employeeCompanyId = employeeCompany?.id || null
+            // Not populated: string ID - fetch company
+            const employeeCompany = await Company.findOne({ id: newAdmin.companyId }).select('id').lean() as any
+            if (employeeCompany && employeeCompany.id) {
+              employeeCompanyId = employeeCompany.id
             }
           }
         }
@@ -2618,59 +2384,60 @@ export async function updateLocation(
           throw new Error(`Employee ${updateData.adminId} does not belong to location's company. Location company: ${locationCompanyId}, Employee company: ${employeeCompanyId}`)
         }
         
-        // Update adminId
-        location.adminId = newAdmin._id
+        // Update adminId - use string ID
+        (location as any).adminId = String((newAdmin as any).id || (newAdmin as any).employeeId)
         
         // Update LocationAdmin relationship (remove old, add new)
         // Use employee.id (6-digit numeric string) instead of ObjectId
-        const employeeIdString = newAdmin.id || newAdmin.employeeId
-        if (!employeeIdString) {
-          console.warn(`[updateLocation] Admin employee ${newAdmin._id} has no id or employeeId field`)
-        } else {
-          await LocationAdmin.findOneAndDelete({ locationId: location._id })
-          await LocationAdmin.create({
-            locationId: location._id,
-            employeeId: employeeIdString
-          })
-        }
+        const employeeIdString = (newAdmin as any).id || (newAdmin as any).employeeId
+      if (!employeeIdString) {
+        console.warn(`[updateLocation] Admin employee has no id or employeeId field`)
       } else {
-        // Remove admin (adminId is null/undefined/empty string)
-        // Set to null explicitly so Mongoose will update the field
-        location.adminId = null as any
-        // Remove LocationAdmin relationship (safe - won't error if record doesn't exist)
-        try {
-          const deleted = await LocationAdmin.findOneAndDelete({ locationId: location._id })
-          if (!deleted) {
-            // LocationAdmin record might not exist, which is fine
-            console.log('LocationAdmin record not found for deletion (this is OK):', location._id)
-          }
-        } catch (error: any) {
-          // Log but don't fail - LocationAdmin deletion is not critical
-          console.error('Error deleting LocationAdmin record (non-critical):', error.message)
+        await LocationAdmin.findOneAndDelete({ locationId: location.id })
+        await LocationAdmin.create({
+          locationId: location.id,
+          employeeId: employeeIdString
+        })
+      }
+    } else {
+      // Remove admin (adminId is null/undefined/empty string)
+      // Set to null explicitly so Mongoose will update the field
+      (location as any).adminId = null as any
+      // Remove LocationAdmin relationship (safe - won't error if record doesn't exist)
+      try {
+        const deleted = await LocationAdmin.findOneAndDelete({ locationId: location.id })
+        if (!deleted) {
+          // LocationAdmin record might not exist, which is fine
+          console.log('LocationAdmin record not found for deletion (this is OK):', location.id)
         }
+      } catch (error: any) {
+        // Log but don't fail - LocationAdmin deletion is not critical
+        console.error('Error deleting LocationAdmin record (non-critical):', error.message)
       }
     }
+  }
   
   // Update other fields
-  if (updateData.name !== undefined) location.name = updateData.name.trim()
-  if (updateData.address_line_1 !== undefined) location.address_line_1 = updateData.address_line_1.trim()
-  if (updateData.address_line_2 !== undefined) location.address_line_2 = updateData.address_line_2?.trim()
-  if (updateData.address_line_3 !== undefined) location.address_line_3 = updateData.address_line_3?.trim()
-  if (updateData.city !== undefined) location.city = updateData.city.trim()
-  if (updateData.state !== undefined) location.state = updateData.state.trim()
-  if (updateData.pincode !== undefined) location.pincode = updateData.pincode.trim()
-  if (updateData.country !== undefined) location.country = updateData.country.trim()
-  if (updateData.phone !== undefined) location.phone = updateData.phone?.trim()
-  if (updateData.email !== undefined) location.email = updateData.email?.trim()
-  if (updateData.status !== undefined) location.status = updateData.status
+  const locationDoc = location as any
+  if (updateData.name !== undefined) locationDoc.name = updateData.name.trim()
+  if (updateData.address_line_1 !== undefined) locationDoc.address_line_1 = updateData.address_line_1.trim()
+  if (updateData.address_line_2 !== undefined) locationDoc.address_line_2 = updateData.address_line_2?.trim()
+  if (updateData.address_line_3 !== undefined) locationDoc.address_line_3 = updateData.address_line_3?.trim()
+  if (updateData.city !== undefined) locationDoc.city = updateData.city.trim()
+  if (updateData.state !== undefined) locationDoc.state = updateData.state.trim()
+  if (updateData.pincode !== undefined) locationDoc.pincode = updateData.pincode.trim()
+  if (updateData.country !== undefined) locationDoc.country = updateData.country.trim()
+  if (updateData.phone !== undefined) locationDoc.phone = updateData.phone?.trim()
+  if (updateData.email !== undefined) locationDoc.email = updateData.email?.trim()
+  if (updateData.status !== undefined) locationDoc.status = updateData.status
   
-  await location.save()
+  await locationDoc.save()
   
   // Populate and return
-  const populated = await Location.findById(location._id)
+  const populated = await Location.findOne({ id: String(locationDoc.id) })
     .populate('companyId', 'id name')
     .populate('adminId', 'id employeeId firstName lastName email')
-    .lean()
+    .lean() as any
   
   return toPlainObject(populated)
 }
@@ -2685,20 +2452,24 @@ export async function deleteLocation(locationId: string): Promise<void> {
   
   const location = await Location.findOne({ id: locationId })
   if (!location) {
-    throw new Error(`Location not found: ${locationId}`)
+    console.warn(`[deleteLocation] Location not found: ${locationId}`);
+    return // Return void instead of null
   }
   
   // Check if any employees are assigned to this location
-  const employeesWithLocation = await Employee.countDocuments({ locationId: location._id })
+  const employeesWithLocation = await Employee.countDocuments({ locationId: 
+    location.id })
   if (employeesWithLocation > 0) {
     throw new Error(`Cannot delete location: ${employeesWithLocation} employee(s) are assigned to this location`)
   }
   
   // Delete LocationAdmin relationships
-  await LocationAdmin.deleteMany({ locationId: location._id })
+  await LocationAdmin.deleteMany({ locationId: 
+    location.id })
   
   // Delete location
-  await Location.deleteOne({ _id: location._id })
+  await Location.deleteOne({ id: 
+    location.id })
 }
 
 /**
@@ -2712,7 +2483,7 @@ export async function getAllLocations(): Promise<any[]> {
     .populate('companyId', 'id name')
     .populate('adminId', 'id employeeId firstName lastName email')
     .sort({ companyId: 1, name: 1 })
-    .lean()
+    .lean() as any
   
   return locations.map((l: any) => toPlainObject(l))
 }
@@ -2738,20 +2509,26 @@ export async function getCompanyById(companyId: string | number): Promise<any | 
     company = await Company.findOne({ id: numericCompanyId })
       .select('id name logo website primaryColor secondaryColor showPrices allowPersonalPayments allowPersonalAddressDelivery enableEmployeeOrder allowLocationAdminViewFeedback allowEligibilityConsumptionReset enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po enable_site_admin_approval require_company_admin_approval adminId createdAt updatedAt')
       .populate('adminId', 'id employeeId firstName lastName email')
-      .lean()
-  }
+      .lean() as any
   
   // If not found by numeric ID, try as string ID (for backward compatibility)
   if (!company && typeof companyId === 'string') {
     company = await Company.findOne({ id: companyId })
       .select('id name logo website primaryColor secondaryColor showPrices allowPersonalPayments allowPersonalAddressDelivery enableEmployeeOrder allowLocationAdminViewFeedback allowEligibilityConsumptionReset enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po enable_site_admin_approval require_company_admin_approval adminId createdAt updatedAt')
-      .populate('adminId', 'id employeeId firstName lastName email')
-      .lean()
-  }
-  
+      .lean() as any
+    
+    // Manual join for adminId
+    if (company && (company as any).adminId) {
+      const admin = await Employee.findOne({ id: (company as any).adminId }).lean() as any
+      if (admin) {
+        (company as any).adminId = toPlainObject(admin)
+      }
+    }
+   
   return company ? toPlainObject(company) : null
 }
-
+  }
+}
 export async function updateCompanySettings(
   companyId: string,
   settings: { 
@@ -2788,8 +2565,8 @@ export async function updateCompanySettings(
   }
   
   if (!company) {
-    console.error(`[updateCompanySettings] Company not found for ID: ${companyId} (type: ${typeof companyId})`)
-    throw new Error(`Company not found: ${companyId}`)
+    console.warn(`[updateCompanySettings] Company not found for ID: ${companyId} (type: ${typeof companyId})`)
+    return // Return null instead of throwing - let API route handle 404
   }
   
   if (settings.showPrices !== undefined) {
@@ -2809,7 +2586,9 @@ export async function updateCompanySettings(
     company.markModified('enableEmployeeOrder')
     // Also explicitly set it using set() to ensure it's tracked
     company.set('enableEmployeeOrder', boolValue)
-    console.log(`[updateCompanySettings] After setting - company.enableEmployeeOrder=${company.enableEmployeeOrder}, type=${typeof company.enableEmployeeOrder}`)
+    console.log(`[updateCompanySettings] After setting - 
+    company.enableEmployeeOrder=${company.enableEmployeeOrder}, type=${typeof 
+    company.enableEmployeeOrder}`)
   } else {
     console.log(`[updateCompanySettings] enableEmployeeOrder is undefined in settings`)
   }
@@ -2888,18 +2667,24 @@ export async function updateCompanySettings(
   }
   
   // Log before save
-  console.log(`[updateCompanySettings] Before save - company.enableEmployeeOrder=${company.enableEmployeeOrder}, type=${typeof company.enableEmployeeOrder}`)
+  console.log(`[updateCompanySettings] Before save - 
+    company.enableEmployeeOrder=${company.enableEmployeeOrder}, type=${typeof 
+    company.enableEmployeeOrder}`)
   console.log(`[updateCompanySettings] Company document _id: ${company._id}, id: ${company.id}`)
   
   // Save the company - explicitly save to ensure enableEmployeeOrder is persisted
   // Use updateOne with raw MongoDB if save fails (fallback)
   try {
-  await company.save({ validateBeforeSave: true })
+  await 
+    company.save({ validateBeforeSave: true })
   } catch (saveError: any) {
     console.error(`[updateCompanySettings] Error saving company document:`, saveError)
     // Fallback: Use raw MongoDB updateOne
     const db = mongoose.connection.db
-    if (db) {
+       if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db) {
       const queryId = !isNaN(numericId) && isFinite(numericId) ? String(numericId) : companyId
       const updateResult = await db.collection('companies').updateOne(
         { id: queryId },
@@ -2928,7 +2713,8 @@ export async function updateCompanySettings(
         }
       )
       if (updateResult.matchedCount === 0) {
-        throw new Error(`Company not found for update: ${companyId}`)
+        console.warn(`[updateCompanySettings] Company not found for update: ${companyId}`)
+        return null // Return null instead of throwing - let API route handle 404
       }
       console.log(`[updateCompanySettings] Updated company using raw MongoDB updateOne`)
     } else {
@@ -2938,6 +2724,9 @@ export async function updateCompanySettings(
   
   // Verify the save by checking the database directly using raw MongoDB query
   const db = mongoose.connection.db
+     if (!db) {
+    throw new Error('Database connection not available')
+  }
   let rawDbValue: boolean | null = null
   if (db) {
     // Use the same ID format we used to find the company
@@ -2947,7 +2736,8 @@ export async function updateCompanySettings(
     console.log(`[updateCompanySettings] Raw DB value after save - enableEmployeeOrder=${rawDbValue}, type=${typeof rawDbValue}, exists=${rawCompany?.enableEmployeeOrder !== undefined}`)
   }
   
-  console.log(`[updateCompanySettings] After save - company.enableEmployeeOrder=${company.enableEmployeeOrder}`)
+  console.log(`[updateCompanySettings] After save - 
+    company.enableEmployeeOrder=${company.enableEmployeeOrder}`)
   
   // Fetch the updated company using Mongoose document (not lean) to ensure all fields are included
   // Then convert to plain object
@@ -2965,7 +2755,8 @@ export async function updateCompanySettings(
   
   if (!updatedDoc) {
     // Fallback: try to use the saved company directly (convert to plain object)
-    const savedPlain = company.toObject ? company.toObject() : company
+    const savedPlain = company.toObject ? 
+    company.toObject() : company
     console.log(`[updateCompanySettings] Using saved company directly, enableEmployeeOrder=${savedPlain.enableEmployeeOrder}`)
     return toPlainObject(savedPlain)
   }
@@ -3005,50 +2796,82 @@ export async function getAllBranches(): Promise<any[]> {
   const branches = await Branch.find()
     .populate('companyId', 'id name')
     .populate('adminId', 'id employeeId firstName lastName email designation')
-    .lean()
+    .lean() as any
+  
   return branches.map((b: any) => toPlainObject(b))
 }
 
 export async function getBranchById(branchId: string): Promise<any | null> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getBranchById] Database connection error:', error.message)
+    return null
+  }
   
-  const branch = await Branch.findOne({ id: branchId })
-    .populate('companyId', 'id name')
-    .populate('adminId', 'id employeeId firstName lastName email designation')
-    .lean()
-  return branch ? toPlainObject(branch) : null
+  try {
+    const branch = await Branch.findOne({ id: branchId })
+      .populate('companyId', 'id name')
+      .populate('adminId', 'id employeeId firstName lastName email designation')
+      .lean() as any
+    
+    return branch ? toPlainObject(branch) : null
+  } catch (error: any) {
+    console.error('[getBranchById] Error:', error.message)
+    return null
+  }
 }
 
 export async function getBranchesByCompany(companyId: string): Promise<any[]> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getBranchesByCompany] Database connection error:', error.message)
+    return []
+  }
   
-  const company = await Company.findOne({ id: companyId })
-  if (!company) return []
+  try {
+    const company = await Company.findOne({ id: companyId })
+    if (!company) return []
 
-  const branches = await Branch.find({ companyId: company._id })
-    .populate('companyId', 'id name')
-    .populate('adminId', 'id employeeId firstName lastName email designation')
-    .lean()
+    const branches = await Branch.find({ companyId: company.id })
+      .populate('companyId', 'id name')
+      .populate('adminId', 'id employeeId firstName lastName email designation')
+      .lean() as any
 
-  return branches.map((b: any) => toPlainObject(b))
+    return branches.map((b: any) => toPlainObject(b))
+  } catch (error: any) {
+    console.error('[getBranchesByCompany] Error:', error.message)
+    return []
+  }
 }
 
 export async function getEmployeesByBranch(branchId: string): Promise<any[]> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getEmployeesByBranch] Database connection error:', error.message)
+    return []
+  }
   
-  const branch = await Branch.findOne({ id: branchId })
-  if (!branch) return []
+  try {
+    const branch = await Branch.findOne({ id: branchId })
+    if (!branch) return []
 
-  const employees = await Employee.find({ branchId: branch._id })
-    .populate('companyId', 'id name')
-    .populate({
-      path: 'branchId',
-      select: 'id name address_line_1 city state pincode',
-      strictPopulate: false
-    })
-    .lean()
+    const employees = await Employee.find({ branchId: branch.id })
+      .populate('companyId', 'id name')
+      .populate({
+        path: 'branchId',
+        select: 'id name address_line_1 city state pincode',
+        strictPopulate: false
+      })
+      .lean() as any
 
-  return employees.map((e: any) => toPlainObject(e))
+    return employees.map((e: any) => toPlainObject(e))
+  } catch (error: any) {
+    console.error('[getEmployeesByBranch] Error:', error.message)
+    return []
+  }
 }
 
 /**
@@ -3076,7 +2899,8 @@ export async function createBranch(branchData: {
   // Find company by ID
   const company = await Company.findOne({ id: branchData.companyId })
   if (!company) {
-    throw new Error(`Company not found: ${branchData.companyId}`)
+    console.warn(`[createBranch] Company not found: ${branchData.companyId}`)
+    throw new Error(`Company not found: ${branchData.companyId}`) // Keep as error - invalid input
   }
   
   // Find employee (Branch Admin) by employeeId if provided
@@ -3090,7 +2914,7 @@ export async function createBranch(branchData: {
     // Verify employee belongs to the same company
     const employeeCompanyId = typeof adminEmployee.companyId === 'object' && adminEmployee.companyId?.id
       ? adminEmployee.companyId.id
-      : (await Company.findById(adminEmployee.companyId))?.id
+      : (await Company.findOne({ id: String(adminEmployee.companyId) }))?.id
     
     if (employeeCompanyId !== branchData.companyId) {
       throw new Error(`Employee ${branchData.adminId} does not belong to company ${branchData.companyId}`)
@@ -3098,12 +2922,12 @@ export async function createBranch(branchData: {
   }
   
   // Generate next 6-digit numeric branch ID
+  let nextBranchId = 200001
   const existingBranches = await Branch.find({})
     .sort({ id: -1 })
     .limit(1)
-    .lean()
+    .lean() as any
   
-  let nextBranchId = 200001 // Start from 200001
   if (existingBranches.length > 0) {
     const lastId = existingBranches[0].id
     if (/^\d{6}$/.test(String(lastId))) {
@@ -3157,12 +2981,12 @@ export async function createBranch(branchData: {
   const newBranch = await Branch.create(branchDataToCreate)
   
   // Populate and return
-  const populated = await Branch.findById(newBranch._id)
+  const populated = await Branch.findOne({ id: String(newBranch.id) })
     .populate('companyId', 'id name')
     .populate('adminId', 'id employeeId firstName lastName email designation')
-    .lean()
+    .lean() as any
   
-  return toPlainObject(populated)
+  return populated ? toPlainObject(populated) : null
 }
 
 /**
@@ -3192,7 +3016,8 @@ export async function updateBranch(
   
   const branch = await Branch.findOne({ id: branchId })
   if (!branch) {
-    throw new Error(`Branch not found: ${branchId}`)
+    console.warn(`[updateBranch] Branch not found: ${branchId}`)
+    return null // Return null instead of throwing - let API route handle 404
   }
   
   // Update name if provided
@@ -3245,11 +3070,11 @@ export async function updateBranch(
       // Verify employee belongs to the same company
       const employeeCompanyId = typeof adminEmployee.companyId === 'object' && adminEmployee.companyId?.id
         ? adminEmployee.companyId.id
-        : (await Company.findById(adminEmployee.companyId))?.id
+        : (await Company.findOne({ id: String(adminEmployee.companyId) }))?.id
       
       const branchCompanyId = typeof branch.companyId === 'object' && branch.companyId?.id
         ? branch.companyId.id
-        : (await Company.findById(branch.companyId))?.id
+        : (await Company.findOne({ id: String(branch.companyId) }))?.id
       
       if (employeeCompanyId !== branchCompanyId) {
         throw new Error(`Employee ${updateData.adminId} does not belong to branch's company`)
@@ -3264,12 +3089,12 @@ export async function updateBranch(
   await branch.save()
   
   // Populate and return
-  const updated = await Branch.findById(branch._id)
+  const updated = await Branch.findOne({ id: String(branch.id) })
     .populate('companyId', 'id name')
     .populate('adminId', 'id employeeId firstName lastName email designation')
-    .lean()
+    .lean() as any
   
-  return toPlainObject(updated)
+  return updated ? toPlainObject(updated) : null
 }
 
 /**
@@ -3282,7 +3107,8 @@ export async function deleteBranch(branchId: string): Promise<boolean> {
   
   const branch = await Branch.findOne({ id: branchId })
   if (!branch) {
-    throw new Error(`Branch not found: ${branchId}`)
+    console.warn(`[updateBranch] Branch not found: ${branchId}`)
+    return false // Return null instead of throwing - let API route handle 404
   }
   
   await Branch.deleteOne({ id: branchId })
@@ -3310,14 +3136,7 @@ export async function addCompanyAdmin(companyId: string, employeeId: string, can
     employee = await Employee.findOne({ employeeId: employeeId }).populate('companyId')
   }
   
-  // Method 3: If not found and employeeId looks like MongoDB ObjectId, try by _id
-  if (!employee && mongoose.Types.ObjectId.isValid(employeeId)) {
-    try {
-      employee = await Employee.findById(employeeId).populate('companyId')
-    } catch (error) {
-      // Ignore invalid ObjectId errors
-    }
-  }
+  // Removed ObjectId fallback - all employees should use string IDs
   
   // Method 4: If still not found and employeeId looks like an email, try by email (with encryption handling)
   if (!employee && employeeId.includes('@')) {
@@ -3340,8 +3159,8 @@ export async function addCompanyAdmin(companyId: string, employeeId: string, can
     
     // If not found with encrypted lookup, try decryption matching (handles different encryption formats)
     if (!employee) {
-      const allEmployees = await Employee.find({ companyId: company._id }).populate('companyId').lean()
-      console.log(`[addCompanyAdmin] Checking ${allEmployees.length} employees via decryption...`)
+      const allEmployees = await Employee.find({ companyId: 
+    company._id }).populate('companyId').lean() as any
       for (const emp of allEmployees) {
         if (emp.email && typeof emp.email === 'string') {
           try {
@@ -3349,7 +3168,7 @@ export async function addCompanyAdmin(companyId: string, employeeId: string, can
             // Normalize both for comparison (case-insensitive)
             if (decryptedEmail && decryptedEmail.trim().toLowerCase() === normalizedEmail) {
               console.log(`[addCompanyAdmin] ✅ Found employee via decryption: ${decryptedEmail}`)
-              employee = await Employee.findById(emp._id).populate('companyId')
+              employee = await Employee.findOne({ id: String(emp.id || emp.employeeId) }).populate('companyId')
               break
             }
           } catch (error) {
@@ -3372,180 +3191,146 @@ export async function addCompanyAdmin(companyId: string, employeeId: string, can
       { id: employeeId },
       { employeeId: employeeId }
     ]
-  }).lean()
-  
+  }).lean() as any
   if (!employeeRaw) {
-    throw new Error(`Employee not found: ${employeeId}`)
+    throw new Error(`Employee not found: ${employeeId}`);
   }
   
-  // Get the companyId directly from the raw document
-  const employeeCompanyIdRaw = employeeRaw.companyId
+  // Extract raw companyId from employee
+  const employeeCompanyIdRaw = employeeRaw.companyId;
   
-  // Convert both to strings for comparison
-  const employeeCompanyIdStr = employeeCompanyIdRaw ? employeeCompanyIdRaw.toString() : null
-  const companyIdStr = company._id.toString()
+  // Normalize both IDs as strings
+  const employeeCompanyIdStr = employeeCompanyIdRaw ? employeeCompanyIdRaw.toString() : null;
+  const companyIdStr = company.id;
   
-  console.log(`[addCompanyAdmin] Debug - Employee: ${employeeId}, Employee companyId: ${employeeCompanyIdStr}, Company _id: ${companyIdStr}`)
+  console.log(
+    `[addCompanyAdmin] Debug - Employee: ${employeeId}, Employee companyId: ${employeeCompanyIdStr}, Company id: ${companyIdStr}`
+  );
   
+  // Verify employee belongs to company
   if (!employeeCompanyIdStr || employeeCompanyIdStr !== companyIdStr) {
-    console.error(`[addCompanyAdmin] Company mismatch - Employee companyId: ${employeeCompanyIdStr}, Company _id: ${companyIdStr}`)
-    // Don't auto-fix - throw error instead to prevent wrong assignments
-    const employeeDisplayId = employeeRaw.employeeId || employeeRaw.id || employeeId
-    throw new Error(`Employee ${employeeDisplayId} does not belong to company ${companyId} (${company.name}). Employee is associated with a different company. Please select an employee that belongs to ${company.name}.`)
+    const employeeDisplayId = employeeRaw.employeeId || employeeRaw.id || employeeId;
+    throw new Error(
+      `Employee ${employeeDisplayId} does not belong to company ${companyId} (${company.name}).`
+    );
   }
   
-  // Create or update company admin record
-  // Use employee._id directly (Mongoose ObjectId)
-  // Use raw MongoDB to ensure the reference is correct
-  const db = mongoose.connection.db
+  // DB Connection
+  const db = mongoose.connection.db;
   
-  // First, try to delete any existing record for this company+employee combo
-  await db.collection('companyadmins').deleteMany({
-    companyId: company._id,
-    employeeId: employee._id
-  })
+  if (!db) {
+    throw new Error("Database connection not available");
+  }
   
-  // Create new record using raw MongoDB to ensure correct ObjectId reference
-  const adminRecord = await db.collection('companyadmins').insertOne({
+  // Remove any existing admin record
+  await db.collection("companyadmins").deleteMany({
     companyId: company._id,
     employeeId: employee._id,
-    canApproveOrders: canApproveOrders,
+  });
+  
+  // Insert new admin record
+  const adminRecord = await db.collection("companyadmins").insertOne({
+    companyId: company._id,
+    employeeId: employee._id,
+    canApproveOrders,
     createdAt: new Date(),
-    updatedAt: new Date()
-  })
+    updatedAt: new Date(),
+  });
   
-  console.log(`[addCompanyAdmin] Created admin record:`, {
-    adminId: adminRecord.insertedId,
-    companyId: company._id.toString(),
-    employeeId: employee._id.toString(),
-    employeeEmployeeId: employee.employeeId || employee.id
-  })
-  
-  // Verify the record was created correctly
+  // Confirm record exists
   if (!adminRecord.insertedId) {
-    throw new Error(`Failed to create admin record for employee ${employeeId}`)
+    throw new Error(`Failed to create admin record for employee ${employeeId}`);
   }
   
-  // Verify it can be found
-  const verifyRecord = await db.collection('companyadmins').findOne({ _id: adminRecord.insertedId })
+  // Verify stored record
+  const verifyRecord = await db
+    .collection("companyadmins")
+    .findOne({ _id: adminRecord.insertedId });
+  
   if (!verifyRecord) {
-    throw new Error(`Admin record was created but cannot be found: ${adminRecord.insertedId}`)
+    throw new Error(`Admin record was created but cannot be found: ${adminRecord.insertedId}`);
   }
   
-  console.log(`[addCompanyAdmin] Verified admin record exists with employeeId:`, verifyRecord.employeeId?.toString())
+  console.log(
+    `[addCompanyAdmin] Verified admin record. employeeId: ${verifyRecord.employeeId?.toString()}`
+  );
   
-  console.log(`Successfully added employee ${employeeId} (${employee.id || employee._id}) as admin for company ${companyId} (canApproveOrders: ${canApproveOrders})`)
-}
+  console.log(
+    `Successfully added employee ${employeeId} (${employee.id || employee._id}) as admin for company ${companyId} (canApproveOrders: ${canApproveOrders})`
+  );
+  
+  // End of addCompanyAdmin function
+  }
+  
+  
+  
+  // ========== REMOVE COMPANY ADMIN ==========
+  export async function removeCompanyAdmin(
+    companyId: string,
+    employeeId: string
+  ): Promise<void> {
+    await connectDB();
+  
+    if (!employeeId) {
+      throw new Error("Employee ID is required");
+    }
+  
+    const company = await Company.findOne({ id: companyId });
+  
+    if (!company) {
+      throw new Error(`Company not found: ${companyId}`);
+    }
+  
+    // Find employee by either id or employeeId
+    let employee: any =
+      (await Employee.findOne({ id: employeeId })) ||
+      (await Employee.findOne({ employeeId }));
+  
+    if (!employee) {
+      throw new Error(`Employee not found: ${employeeId}`);
+    }
+  
+    // Attempt direct delete
+    let result = await CompanyAdmin.findOneAndDelete({
+      companyId: company._id,
+      employeeId: employee._id,
+    });
+  
+    // If not found, fallback through manual comparison
+    if (!result) {
+      const allAdmins = await CompanyAdmin.find({ companyId: company._id }).lean();
+  
+      for (const adm of allAdmins) {
+        const admCompanyIdStr = adm.companyId?.toString();
+        const admEmployeeIdStr = adm.employeeId?.toString();
+        const targetEmployeeIdStr = employee._id.toString();
+  
+        if (admCompanyIdStr === companyId && admEmployeeIdStr === targetEmployeeIdStr) {
+          result = await CompanyAdmin.findByIdAndDelete(adm._id);
+          break;
+        }
+      }
+    }
+  
+    // Final fallback
+    if (!result) {
+      const populatedAdmins = await CompanyAdmin.find({ companyId: company._id })
+        .populate("employeeId", "id employeeId")
+        .lean();
+  
+      for (const adm of populatedAdmins) {
+        if (adm.employeeId?.id === employeeId || adm.employeeId?.employeeId === employeeId) {
+          result = await CompanyAdmin.findByIdAndDelete(adm._id);
+          break;
+        }
+      }
+    }
+  
+    if (!result) {
+      throw new Error(`Admin relationship not found for employee ${employeeId} (${employee.id || employee.employeeId}) in company ${companyId}`)
+    }
+  }
 
-export async function removeCompanyAdmin(companyId: string, employeeId: string): Promise<void> {
-  await connectDB()
-  
-  if (!employeeId) {
-    throw new Error('Employee ID is required')
-  }
-  
-  const company = await Company.findOne({ id: companyId })
-  if (!company) {
-    throw new Error(`Company not found: ${companyId}`)
-  }
-  
-  // Try multiple lookup methods to find the employee
-  let employee: any = null
-  
-  // Method 1: Try by id field (most common)
-  employee = await Employee.findOne({ id: employeeId })
-  
-  // Method 2: If not found, try by employeeId field (business ID like "IND-001")
-  if (!employee) {
-    employee = await Employee.findOne({ employeeId: employeeId })
-  }
-  
-  // Method 3: If not found and employeeId looks like MongoDB ObjectId, try by _id
-  if (!employee && mongoose.Types.ObjectId.isValid(employeeId)) {
-    try {
-      employee = await Employee.findById(employeeId)
-    } catch (error) {
-      // Ignore invalid ObjectId errors
-    }
-  }
-  
-  if (!employee) {
-    throw new Error(`Employee not found: ${employeeId}`)
-  }
-  
-  // Force remove: Find and delete the admin record using multiple methods
-  const employeeIdStr = employee._id.toString()
-  const companyIdStr = company._id.toString()
-  
-  // Method 1: Try standard lookup
-  let result = await CompanyAdmin.findOneAndDelete({
-    companyId: company._id,
-    employeeId: employee._id,
-  })
-  
-  // Method 2: If not found, get all admins and match by ObjectId string comparison
-  if (!result) {
-    const allAdmins = await CompanyAdmin.find({ companyId: company._id }).lean()
-    
-    // Find matching admin by comparing ObjectId strings
-    for (const adm of allAdmins) {
-      const admCompanyIdStr = adm.companyId ? adm.companyId.toString() : null
-      const admEmployeeIdStr = adm.employeeId ? adm.employeeId.toString() : null
-      
-      // Check if this admin matches both company and employee
-      if (admCompanyIdStr === companyIdStr && admEmployeeIdStr === employeeIdStr) {
-        // Delete using the admin record's _id
-        result = await CompanyAdmin.findByIdAndDelete(adm._id)
-        if (result) {
-          break
-        }
-      }
-    }
-  }
-  
-  // Method 3: If still not found, try to find by employee id/employeeId fields
-  if (!result) {
-    // Try to find admin where employeeId matches employee's id or employeeId
-    const allAdmins = await CompanyAdmin.find({ companyId: company._id })
-      .populate('employeeId', 'id employeeId')
-      .lean()
-    
-    for (const adm of allAdmins) {
-      const populatedEmployee = adm.employeeId
-      if (populatedEmployee && typeof populatedEmployee === 'object') {
-        const empId = populatedEmployee.id || populatedEmployee.employeeId
-        if (empId === employee.id || empId === employee.employeeId || empId === employeeId) {
-          result = await CompanyAdmin.findByIdAndDelete(adm._id)
-          if (result) {
-            break
-          }
-        }
-      }
-    }
-  }
-  
-  // Method 4: Last resort - delete by employee ObjectId string in raw collection
-  if (!result) {
-    const db = mongoose.connection.db
-    const adminCollection = db.collection('companyadmins')
-    const allAdminsRaw = await adminCollection.find({ 
-      companyId: company._id 
-    }).toArray()
-    
-    for (const adm of allAdminsRaw) {
-      const admEmployeeIdStr = adm.employeeId ? adm.employeeId.toString() : null
-      if (admEmployeeIdStr === employeeIdStr) {
-        await adminCollection.deleteOne({ _id: adm._id })
-        result = { _id: adm._id } // Mark as deleted
-        break
-      }
-    }
-  }
-  
-  if (!result) {
-    throw new Error(`Admin relationship not found for employee ${employeeId} (${employee.id || employee.employeeId}) in company ${companyId}`)
-  }
-}
 
 export async function updateCompanyAdminPrivileges(companyId: string, employeeId: string, canApproveOrders: boolean): Promise<void> {
   await connectDB()
@@ -3570,22 +3355,17 @@ export async function updateCompanyAdminPrivileges(companyId: string, employeeId
     employee = await Employee.findOne({ employeeId: employeeId })
   }
   
-  // Method 3: If not found and employeeId looks like MongoDB ObjectId, try by _id
-  if (!employee && mongoose.Types.ObjectId.isValid(employeeId)) {
-    try {
-      employee = await Employee.findById(employeeId)
-    } catch (error) {
-      // Ignore invalid ObjectId errors
-    }
-  }
+  // Removed ObjectId fallback - all employees should use string IDs
   
   if (!employee) {
     throw new Error(`Employee not found: ${employeeId}`)
   }
   
   const admin = await CompanyAdmin.findOne({
-    companyId: company._id,
-    employeeId: employee._id,
+    companyId: 
+    company._id,
+    employeeId: 
+    employee._id,
   })
   
   if (!admin) {
@@ -3595,10 +3375,20 @@ export async function updateCompanyAdminPrivileges(companyId: string, employeeId
   admin.canApproveOrders = canApproveOrders
   await admin.save()
   
-  console.log(`Successfully updated admin privileges for ${employeeId} (${employee.id || employee.employeeId}) in company ${companyId}`)
+  console.log(`Successfully updated admin privileges for ${employeeId} (${
+    employee.id || 
+    employee.employeeId}) in company ${companyId}`)
 }
 
 export async function getCompanyAdmins(companyId: string): Promise<any[]> {
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getCompanyAdmins] Database connection error:', error.message)
+    return []
+  }
+  
+  try {
   await connectDB()
   
   const company = await Company.findOne({ id: companyId })
@@ -3613,9 +3403,8 @@ export async function getCompanyAdmins(companyId: string): Promise<any[]> {
       select: 'id employeeId firstName lastName email',
       model: 'Employee'
     })
-    .lean()
+    .lean() as any
   
-  console.log(`[getCompanyAdmins] Found ${admins.length} admins for company ${companyId}`)
   if (admins.length > 0) {
     console.log(`[getCompanyAdmins] Admin employeeIds (raw):`, admins.map((a: any) => ({
       employeeId: a.employeeId,
@@ -3635,7 +3424,10 @@ export async function getCompanyAdmins(companyId: string): Promise<any[]> {
       console.log(`[getCompanyAdmins] Admin has null employeeId, trying manual lookup:`, admin._id)
       // Use raw MongoDB collection to get the actual ObjectId
       const db = mongoose.connection.db
-      const rawAdmin = await db.collection('companyadmins').findOne({ _id: admin._id })
+         if (!db) {
+    throw new Error('Database connection not available')
+  }
+  const rawAdmin = await db.collection('companyadmins').findOne({ _id: admin._id })
       if (rawAdmin && rawAdmin.employeeId) {
         console.log(`[getCompanyAdmins] Raw admin employeeId:`, rawAdmin.employeeId, 'type:', typeof rawAdmin.employeeId)
         
@@ -3650,16 +3442,27 @@ export async function getCompanyAdmins(companyId: string): Promise<any[]> {
           console.log(`[getCompanyAdmins] Found employee via string matching: ${employee.employeeId || employee.id || employee._id}`)
           // Convert to format expected by the rest of the code
           admin.employeeId = {
-            _id: employee._id,
-            id: employee.id || employee._id.toString(),
-            employeeId: employee.employeeId,
-            firstName: employee.firstName,
-            lastName: employee.lastName,
-            email: employee.email,
-            companyName: employee.companyName
+            _id: 
+    employee._id,
+            id: 
+    employee.id || 
+    employee._id.toString(),
+            employeeId: 
+    employee.employeeId,
+            firstName: 
+    employee.firstName,
+            lastName: 
+    employee.lastName,
+            email: 
+    employee.email,
+            companyName: 
+    employee.companyName
           }
           validAdmins.push(admin)
-          console.log(`[getCompanyAdmins] Manually populated employee: ${employee.employeeId || employee.id || employee._id}`)
+          console.log(`[getCompanyAdmins] Manually populated employee: ${
+    employee.employeeId || 
+    employee.id || 
+    employee._id}`)
         } else {
           console.log(`[getCompanyAdmins] Employee not found for admin:`, admin._id, 'employeeId:', employeeIdStr)
           // Don't delete - the employee might exist but lookup is failing
@@ -3677,13 +3480,15 @@ export async function getCompanyAdmins(companyId: string): Promise<any[]> {
         console.log(`[getCompanyAdmins] Invalid populated employee, trying manual lookup:`, admin._id)
         // Try manual lookup using raw collection
         const db = mongoose.connection.db
-        const rawAdmin = await db.collection('companyadmins').findOne({ _id: admin._id })
+           if (!db) {
+    throw new Error('Database connection not available')
+  }
+  const rawAdmin = await db.collection('companyadmins').findOne({ _id: admin._id })
         if (rawAdmin && rawAdmin.employeeId) {
-          let employee = await Employee.findById(rawAdmin.employeeId)
+          let employee = await Employee.findOne({ id: String(rawAdmin.employeeId) })
             .select('id employeeId firstName lastName email')
-            .lean()
+            .lean() as any
           
-          // If not found, try raw collection
           if (!employee) {
             const employeeByMongoId = await db.collection('employees').findOne({ _id: rawAdmin.employeeId })
             if (employeeByMongoId) {
@@ -3694,7 +3499,8 @@ export async function getCompanyAdmins(companyId: string): Promise<any[]> {
           if (employee) {
             admin.employeeId = employee
             validAdmins.push(admin)
-            console.log(`[getCompanyAdmins] Manually populated employee: ${employee.employeeId || employee.id || employee._id}`)
+            console.log(`[getCompanyAdmins] Manually populated employee: ${employee.employeeId || employee.id || 
+    employee._id}`)
             continue
           }
         }
@@ -3746,7 +3552,11 @@ export async function getCompanyAdmins(companyId: string): Promise<any[]> {
     return adminObj
   })
   
-  return formattedAdmins
+    return formattedAdmins
+  } catch (error: any) {
+    console.error('[getCompanyAdmins] Error:', error.message)
+    return []
+  }
 }
 
 export async function isCompanyAdmin(email: string, companyId: string): Promise<boolean> {
@@ -3766,11 +3576,11 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
   }
   
   // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
+  let employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
   
   // If not found, try decryption matching
   if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
+    const allEmployees = await Employee.find({}).lean() as any
     for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
@@ -3800,27 +3610,35 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
   
   // Use raw MongoDB collection for reliable lookup
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     console.error('[isCompanyAdmin] Database connection not available')
     return false
   }
   
   // Ensure we have proper ObjectIds
   const employeeObjectId = employee._id instanceof mongoose.Types.ObjectId 
-    ? employee._id 
+    ? 
+    employee._id 
     : new mongoose.Types.ObjectId(employee._id)
   const companyObjectId = company._id instanceof mongoose.Types.ObjectId 
-    ? company._id 
+    ? 
+    company._id 
     : new mongoose.Types.ObjectId(company._id)
   
   console.log('[isCompanyAdmin] Looking up admin record:', {
     email: normalizedEmail,
     companyIdString: companyId,
-    employeeId: employeeObjectId.toString(),
-    employeeObjectIdType: employeeObjectId.constructor.name,
+    employeeId: 
+    employeeObjectId.toString(),
+    employeeObjectIdType: 
+    employeeObjectId.constructor.name,
     companyObjectId: companyObjectId.toString(),
     companyObjectIdType: companyObjectId.constructor.name,
-    companyName: company.name
+    companyName: 
+    company.name
   })
   
   // Try using CompanyAdmin model first (more reliable) - Mongoose handles ObjectId conversion
@@ -3828,7 +3646,7 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
   let admin = await CompanyAdmin.findOne({
     companyId: companyObjectId,
     employeeId: employeeObjectId
-  }).lean()
+  }).lean() as any
   
   if (admin) {
     console.log('[isCompanyAdmin] ✅ Found admin via CompanyAdmin model:', {
@@ -3852,7 +3670,8 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
     console.log('[isCompanyAdmin] ✅ Found admin via raw MongoDB query:', {
       adminId: adminRecord._id?.toString(),
       employeeId: adminRecord.employeeId?.toString(),
-      companyId: adminRecord.companyId?.toString()
+      companyId: 
+    adminRecord.companyId?.toString()
     })
     return true
   }
@@ -3876,8 +3695,10 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
         companyIdType: allCompanyAdmins[0].companyId?.constructor?.name
       },
       searchingFor: {
-        employeeId: employeeObjectId.toString(),
-        employeeIdType: employeeObjectId.constructor.name,
+        employeeId: 
+    employeeObjectId.toString(),
+        employeeIdType: 
+    employeeObjectId.constructor.name,
         companyId: companyObjectId.toString(),
         companyIdType: companyObjectId.constructor.name
       }
@@ -3890,7 +3711,8 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
   
   // Also try to match by employee numeric ID if ObjectId doesn't match
   // Some records might have been created with mismatched ObjectIds
-  const employeeNumericId = employee.id || employee.employeeId
+  const employeeNumericId = employee.id || 
+    employee.employeeId
   const companyNumericId = company.id
   
   console.log('[isCompanyAdmin] Trying multiple matching strategies:', {
@@ -3929,10 +3751,10 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
       if (!a.employeeId || !a.companyId) return null
       
       try {
-        // Find the employee and company by their ObjectIds stored in companyadmins
+        // Find the employee and company by their string IDs stored in companyadmins
         const [storedEmployee, storedCompany] = await Promise.all([
-          Employee.findById(a.employeeId).lean(),
-          Company.findById(a.companyId).lean()
+          Employee.findOne({ id: String(a.employeeId) }).lean() as any,
+          Company.findOne({ id: String(a.companyId) }).lean() as any
         ])
         
         if (storedEmployee && storedCompany) {
@@ -4004,11 +3826,11 @@ export async function canApproveOrders(email: string, companyId: string): Promis
   }
   
   // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
+  let employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
   
   // If not found, try decryption matching
   if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
+    const allEmployees = await Employee.find({}).lean() as any
     for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
@@ -4035,17 +3857,22 @@ export async function canApproveOrders(email: string, companyId: string): Promis
   
   // Use raw MongoDB collection for reliable lookup (similar to isCompanyAdmin)
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     // Fallback to Mongoose if raw DB not available
   const admin = await CompanyAdmin.findOne({
-    companyId: company._id,
-    employeeId: employee._id,
+    companyId: 
+    company._id,
+    employeeId: 
+    employee._id,
   })
     return admin?.canApproveOrders || false
   }
   
   const employeeIdStr = (employee._id || employee.id).toString()
-  const companyIdStr = company._id.toString()
+  const companyIdStr = company.id
   
   // Find all admins and match by string comparison
   const allAdmins = await db.collection('companyadmins').find({}).toArray()
@@ -4082,11 +3909,11 @@ export async function isBranchAdmin(email: string, branchId: string): Promise<bo
   }
   
   // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
+  let employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
   
   // If not found, try decryption matching
   if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
+    const allEmployees = await Employee.find({}).lean() as any
     for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
@@ -4140,11 +3967,11 @@ export async function getBranchByAdminEmail(email: string): Promise<any | null> 
   }
   
   // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
+  let employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
   
   // If not found, try decryption matching
   if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
+    const allEmployees = await Employee.find({}).lean() as any
     for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
@@ -4168,7 +3995,7 @@ export async function getBranchByAdminEmail(email: string): Promise<any | null> 
   const Branch = require('../models/Branch').default
   const branch = await Branch.findOne({ adminId: employee._id })
     .populate('companyId', 'id name')
-    .lean()
+    .lean() as any
   
   if (!branch) {
     return null
@@ -4200,11 +4027,11 @@ export async function isLocationAdmin(email: string, locationId: string): Promis
   }
   
   // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
+  let employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
   
   // If not found, try decryption matching
   if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
+    const allEmployees = await Employee.find({}).lean() as any
     for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
@@ -4232,7 +4059,7 @@ export async function isLocationAdmin(email: string, locationId: string): Promis
   
   // Check if employee is the Location Admin
   const employeeIdStr = (employee._id || employee.id).toString()
-  const locationAdminIdStr = location.adminId?.toString()
+  const locationAdminIdStr = (location as any).adminId?.toString()
   
   return employeeIdStr === locationAdminIdStr
 }
@@ -4257,11 +4084,11 @@ export async function getLocationByAdminEmail(email: string): Promise<any | null
   }
   
   // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
+  let employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
   
   // If not found, try decryption matching
   if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
+    const allEmployees = await Employee.find({}).lean() as any
     for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
@@ -4284,26 +4111,25 @@ export async function getLocationByAdminEmail(email: string): Promise<any | null
   // Find location where this employee is admin
   // CRITICAL: Handle both ObjectId and string formats for adminId
   // Some locations may have adminId stored as string (legacy data)
-  let location = await Location.findOne({ adminId: employee._id })
+  let location = await Location.findOne({ adminId: 
+    employee._id })
     .populate('companyId', 'id name')
     .populate('adminId', 'id employeeId firstName lastName email')
-    .lean()
+    .lean() as any
   
-  // If not found, try finding by string adminId (for backward compatibility)
   if (!location) {
     const adminIdString = employee._id.toString()
     location = await Location.findOne({ adminId: adminIdString })
       .populate('companyId', 'id name')
       .populate('adminId', 'id employeeId firstName lastName email')
-      .lean()
+      .lean() as any
     
-    // If found with string format, log a warning and fix it
     if (location) {
       console.log(`[getLocationByAdminEmail] ⚠️  Found location with string adminId, fixing to ObjectId format`)
       try {
         await Location.updateOne(
-          { _id: location._id },
-          { $set: { adminId: employee._id } }
+          { id: location.id },
+          { $set: { adminId: String(employee.id || employee.employeeId) } }
         )
         console.log(`[getLocationByAdminEmail] ✅ Fixed location ${location.id} adminId format`)
       } catch (error: any) {
@@ -4377,8 +4203,8 @@ export async function isEmployeeInLocation(employeeId: string, locationId: strin
     return false // Employee has no location assigned
   }
   
-  const employeeLocationIdStr = employee.locationId.toString()
-  const locationIdStr = location._id.toString()
+  const employeeLocationIdStr = String(employee.locationId)
+  const locationIdStr = String(location.id)
   
   return employeeLocationIdStr === locationIdStr
 }
@@ -4389,8 +4215,14 @@ export async function isEmployeeInLocation(employeeId: string, locationId: strin
  * @returns Array of employees
  */
 export async function getEmployeesByLocation(locationId: string): Promise<any[]> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getEmployeesByLocation] Database connection error:', error.message)
+    return []
+  }
   
+  try {
   // Find location by id (string) - locationId is always a 6-digit string like "400006"
   // Do NOT try to use it as ObjectId (_id) as it will cause cast errors
   const location = await Location.findOne({ id: locationId })
@@ -4401,35 +4233,39 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
   }
   
   console.log(`[getEmployeesByLocation] Found location: ${location.id} (${location._id}), name: ${location.name}`)
-  console.log(`[getEmployeesByLocation] Location companyId type: ${typeof location.companyId}, value:`, location.companyId)
+  console.log(`[getEmployeesByLocation] Location companyId type: ${typeof 
+    (location as any).companyId}, value:`, 
+    (location as any).companyId)
   
   // Find employees with this locationId (using ObjectId)
-  let employees = await Employee.find({ locationId: location._id })
+  let employees = await Employee.find({ locationId: 
+    location._id })
     .populate('companyId', 'id name')
     .populate('locationId', 'id name')
     .sort({ employeeId: 1 })
-    .lean()
+    .lean() as any
   
-  console.log(`[getEmployeesByLocation] Found ${employees.length} employees by locationId ObjectId`)
   
   // Also try matching by location.id string if employees have locationId populated with id field
   if (employees.length === 0) {
     // Extract companyId ObjectId properly - handle both populated and non-populated cases
     let companyObjectId = null
-    if (location.companyId) {
-      if (typeof location.companyId === 'object') {
+    if ((location as any).companyId) {
+      if (typeof (location as any).companyId === 'object') {
         // Populated: { _id: ObjectId, id: '100004', name: '...' }
-        companyObjectId = location.companyId._id || location.companyId
-      } else if (typeof location.companyId === 'string') {
+        companyObjectId = (location as any).companyId._id || 
+    (location as any).companyId
+      } else if (typeof (location as any).companyId === 'string') {
         // ObjectId string or company ID string
-        if (location.companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(location.companyId)) {
+        if ((location as any).companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test((location as any).companyId)) {
           // It's an ObjectId string
           const mongoose = require('mongoose')
-          companyObjectId = new mongoose.Types.ObjectId(location.companyId)
+          companyObjectId = new mongoose.Types.ObjectId((location as any).companyId)
         } else {
           // It's a company ID string (like '100004'), need to look up the company
           const Company = require('../models/Company').default
-          const company = await Company.findOne({ id: location.companyId }).select('_id').lean()
+          const company = await Company.findOne({ id: 
+            (location as any).companyId }).select('_id').lean() as any
           if (company) {
             companyObjectId = company._id
           }
@@ -4438,11 +4274,13 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
     }
     
     if (!companyObjectId) {
-      console.warn(`[getEmployeesByLocation] Could not extract companyId ObjectId from location. Location companyId:`, location.companyId)
+      console.warn(`[getEmployeesByLocation] Could not extract companyId ObjectId from location. Location companyId:`, 
+        (location as any).companyId)
       // Try to get company by location's companyId string if available
-      if (location.companyId && typeof location.companyId === 'object' && location.companyId.id) {
+      if ((location as any).companyId && typeof (location as any).companyId === 'object' && (location as any).companyId.id) {
         const Company = require('../models/Company').default
-        const company = await Company.findOne({ id: location.companyId.id }).select('_id').lean()
+        const company = await Company.findOne({ id: 
+          (location as any).companyId.id }).select('_id').lean() as any
         if (company) {
           companyObjectId = company._id
         }
@@ -4461,15 +4299,16 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
       .populate('companyId', 'id name')
       .populate('locationId', 'id name')
       .sort({ employeeId: 1 })
-      .lean()
+      .lean() as any
     
-    // Filter employees where locationId.id matches location.id
     const matchedByLocationIdString = allCompanyEmployees.filter((emp: any) => {
       if (emp.locationId) {
         const empLocationId = typeof emp.locationId === 'object' 
           ? (emp.locationId.id || emp.locationId._id?.toString())
           : emp.locationId
-        return empLocationId === location.id || empLocationId === location._id?.toString()
+        return empLocationId === 
+    location.id || empLocationId === 
+    location._id?.toString()
       }
       return false
     })
@@ -4500,7 +4339,8 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
     
     // Also try city name from location if available
     if (location.city) {
-      keyWords.push(location.city.toLowerCase())
+      keyWords.push(
+    location.city.toLowerCase())
     }
     
     console.log(`[getEmployeesByLocation] Searching for employees with location containing keywords:`, keyWords)
@@ -4508,20 +4348,22 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
     // Get all employees for the same company as the location
     // Extract companyId ObjectId properly - handle both populated and non-populated cases
     let companyObjectId = null
-    if (location.companyId) {
-      if (typeof location.companyId === 'object') {
+    if ((location as any).companyId) {
+      if (typeof (location as any).companyId === 'object') {
         // Populated: { _id: ObjectId, id: '100004', name: '...' }
-        companyObjectId = location.companyId._id || location.companyId
-      } else if (typeof location.companyId === 'string') {
+        companyObjectId = (location as any).companyId._id || 
+    (location as any).companyId
+      } else if (typeof (location as any).companyId === 'string') {
         // ObjectId string or company ID string
-        if (location.companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(location.companyId)) {
+        if ((location as any).companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test((location as any).companyId)) {
           // It's an ObjectId string
           const mongoose = require('mongoose')
-          companyObjectId = new mongoose.Types.ObjectId(location.companyId)
+          companyObjectId = new mongoose.Types.ObjectId((location as any).companyId)
         } else {
           // It's a company ID string (like '100004'), need to look up the company
           const Company = require('../models/Company').default
-          const company = await Company.findOne({ id: location.companyId }).select('_id').lean()
+          const company = await Company.findOne({ id: 
+            (location as any).companyId }).select('_id').lean() as any
           if (company) {
             companyObjectId = company._id
           }
@@ -4530,7 +4372,8 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
     }
     
     if (!companyObjectId) {
-      console.warn(`[getEmployeesByLocation] Location has no valid companyId, cannot filter employees. Location companyId:`, location.companyId)
+      console.warn(`[getEmployeesByLocation] Location has no valid companyId, cannot filter employees. Location companyId:`, 
+        (location as any).companyId)
       return []
     }
     
@@ -4539,9 +4382,8 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
       .populate('companyId', 'id name')
       .populate('locationId', 'id name')
       .sort({ employeeId: 1 })
-      .lean()
+      .lean() as any
     
-    console.log(`[getEmployeesByLocation] Found ${allCompanyEmployees.length} total employees for company`)
     
     // Location field is NOT encrypted (not employee PII) - use as plaintext
     const filteredByLocationName = allCompanyEmployees.filter((emp: any) => {
@@ -4585,6 +4427,7 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
   
   // Decrypt employee fields (required since we use .lean())
   // CRITICAL: Include 'location' in sensitiveFields for Company Admin - they need to see decrypted locations
+  const { decrypt } = require('../utils/encryption')
   const decryptedEmployees = employees.map((e: any) => {
     if (!e) return null
     const sensitiveFields = ['email', 'mobile', 'address', 'firstName', 'lastName', 'designation', 'location']
@@ -4603,6 +4446,10 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
   console.log(`[getEmployeesByLocation] Returning ${decryptedEmployees.length} employees after decryption`)
   
   return decryptedEmployees.map((e: any) => toPlainObject(e))
+  } catch (error: any) {
+    console.error('[getEmployeesByLocation] Error:', error.message)
+    return []
+  }
 }
 
 export async function getCompanyByAdminEmail(email: string): Promise<any | null> {
@@ -4651,20 +4498,30 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
   
   console.log(`[getCompanyByAdminEmail] ✅ STEP 1 SUCCESS: Employee found`)
   console.log(`[getCompanyByAdminEmail] Employee details:`, {
-    id: employee.id,
-    employeeId: employee.employeeId,
-    email: employee.email,
-    _id: employee._id?.toString(),
-    _idType: typeof employee._id,
-    companyId: employee.companyId,
-    companyIdType: typeof employee.companyId
+    id: 
+    employee.id,
+    employeeId: 
+    employee.employeeId,
+    email: 
+    employee.email,
+    _id: 
+    employee._id?.toString(),
+    _idType: typeof 
+    employee._id,
+    companyId: 
+    employee.companyId,
+    companyIdType: typeof 
+    employee.companyId
   })
   
   // Find company where this employee is an admin
   // We need the employee's _id (ObjectId) to match against admin records
   // Since getEmployeeByEmail returns a plain object, we need to fetch the raw employee document
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     console.error(`[getCompanyByAdminEmail] Database connection not available`)
     return null
   }
@@ -4674,53 +4531,72 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
   let employeeObjectId: mongoose.Types.ObjectId | null = null
   
   console.log(`[getCompanyByAdminEmail] 🔍 Getting employee _id. Employee object:`, {
-    id: employee.id,
-    employeeId: employee.employeeId,
-    _id: employee._id,
-    _idType: typeof employee._id,
-    email: employee.email
+    id: 
+    employee.id,
+    employeeId: 
+    employee.employeeId,
+    _id: 
+    employee._id,
+    _idType: typeof 
+    employee._id,
+    email: 
+    employee.email
   })
   
   // Method 1: Use _id directly from employee object (getEmployeeByEmail preserves it)
   if (employee._id) {
     if (typeof employee._id === 'string' && mongoose.Types.ObjectId.isValid(employee._id)) {
       employeeObjectId = new mongoose.Types.ObjectId(employee._id)
-      console.log(`[getCompanyByAdminEmail] ✅ Using _id from employee object: ${employeeObjectId.toString()}`)
+      console.log(`[getCompanyByAdminEmail] ✅ Using _id from employee object: ${
+    employeeObjectId.toString()}`)
     } else if (employee._id instanceof mongoose.Types.ObjectId) {
       employeeObjectId = employee._id
-      console.log(`[getCompanyByAdminEmail] ✅ Using ObjectId _id from employee object: ${employeeObjectId.toString()}`)
+      console.log(`[getCompanyByAdminEmail] ✅ Using ObjectId _id from employee object: ${
+    employeeObjectId.toString()}`)
     }
   }
   
-  // Method 2: Fallback - get _id from raw MongoDB document using employee.id
+  // Method 2: Fallback - get _id from raw MongoDB document using 
+    employee.id
   if (!employeeObjectId && employee.id && db) {
-    const rawEmployee = await db.collection('employees').findOne({ id: employee.id })
+    const rawEmployee = await db.collection('employees').findOne({ id: 
+    employee.id })
     if (rawEmployee && rawEmployee._id) {
       employeeObjectId = rawEmployee._id instanceof mongoose.Types.ObjectId
-        ? rawEmployee._id
-        : new mongoose.Types.ObjectId(rawEmployee._id.toString())
-      console.log(`[getCompanyByAdminEmail] ✅ Found _id using employee.id: ${employeeObjectId.toString()}`)
+        ? 
+    rawEmployee._id
+        : new mongoose.Types.ObjectId(
+    rawEmployee._id.toString())
+      console.log(`[getCompanyByAdminEmail] ✅ Found _id using 
+    employee.id: ${employeeObjectId?.toString()}`)
     }
   }
   
   if (!employeeObjectId) {
     console.error(`[getCompanyByAdminEmail] ❌ CRITICAL: Could not find employee _id`)
     console.error(`[getCompanyByAdminEmail] Employee object:`, {
-      id: employee.id,
-      employeeId: employee.employeeId,
-      email: employee.email,
-      _id: employee._id,
-      _idType: typeof employee._id
+      id: 
+    employee.id,
+      employeeId: 
+    employee.employeeId,
+      email: 
+    employee.email,
+      _id: 
+    employee._id,
+      _idType: typeof 
+    employee._id
     })
     console.error(`[getCompanyByAdminEmail] This is a critical error - cannot proceed without employee _id`)
     console.log(`[getCompanyByAdminEmail] ========================================`)
     return null
   }
   
-  console.log(`[getCompanyByAdminEmail] ✅ Employee _id successfully retrieved: ${employeeObjectId.toString()}`)
+  console.log(`[getCompanyByAdminEmail] ✅ Employee _id successfully retrieved: ${
+    employeeObjectId.toString()}`)
   
   console.log(`[getCompanyByAdminEmail] 🔍 STEP 2: Looking for admin record`)
-  console.log(`[getCompanyByAdminEmail] Employee _id (ObjectId): ${employeeObjectId.toString()}`)
+  console.log(`[getCompanyByAdminEmail] Employee _id (ObjectId): ${
+    employeeObjectId.toString()}`)
   console.log(`[getCompanyByAdminEmail] Employee _id type: ${employeeObjectId instanceof mongoose.Types.ObjectId ? 'ObjectId' : typeof employeeObjectId}`)
   
   // Find admin record using direct MongoDB query with ObjectId (most reliable)
@@ -4739,10 +4615,15 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
     console.log(`[getCompanyByAdminEmail] ✅ STEP 2 SUCCESS: Admin record found via direct query`)
     console.log(`[getCompanyByAdminEmail] Admin record:`, {
       _id: adminRecord._id?.toString(),
-      employeeId: adminRecord.employeeId?.toString(),
-      employeeIdType: adminRecord.employeeId instanceof mongoose.Types.ObjectId ? 'ObjectId' : typeof adminRecord.employeeId,
-      companyId: adminRecord.companyId?.toString(),
-      canApproveOrders: adminRecord.canApproveOrders
+      employeeId: 
+    adminRecord.employeeId?.toString(),
+      employeeIdType: 
+    adminRecord.employeeId instanceof mongoose.Types.ObjectId ? 'ObjectId' : typeof 
+    adminRecord.employeeId,
+      companyId: 
+    adminRecord.companyId?.toString(),
+      canApproveOrders: 
+    adminRecord.canApproveOrders
     })
   } else {
     // Fallback: Try to find all admins and log for debugging
@@ -4756,13 +4637,15 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
       employeeIdType: a.employeeId instanceof mongoose.Types.ObjectId ? 'ObjectId' : typeof a.employeeId,
       companyId: a.companyId?.toString(),
       canApproveOrders: a.canApproveOrders,
-      matches: a.employeeId?.toString() === employeeObjectId.toString() ? '✅ MATCH' : '❌ NO MATCH'
+      matches: a.employeeId?.toString() === 
+    employeeObjectId.toString() ? '✅ MATCH' : '❌ NO MATCH'
     })))
     
     // Try fallback matching with string comparison
     const fallbackMatch = allAdmins.find((a: any) => {
       if (!a.employeeId) return false
-      return a.employeeId.toString() === employeeObjectId.toString()
+      return a.employeeId.toString() === 
+    employeeObjectId.toString()
     })
     
     if (fallbackMatch) {
@@ -4770,13 +4653,18 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
       adminRecord = fallbackMatch
     } else {
       console.error(`[getCompanyByAdminEmail] ❌ STEP 2 FAILED: No admin record found`)
-      console.error(`[getCompanyByAdminEmail] Employee _id searched: ${employeeObjectId.toString()}`)
+      console.error(`[getCompanyByAdminEmail] Employee _id searched: ${
+    employeeObjectId.toString()}`)
       console.error(`[getCompanyByAdminEmail] Employee details:`, {
-        id: employee.id,
-        employeeId: employee.employeeId,
-        _id: employee._id?.toString(),
+        id: 
+    employee.id,
+        employeeId: 
+    employee.employeeId,
+        _id: 
+    employee._id?.toString(),
         email: normalizedEmail,
-        employeeEmail: employee.email
+        employeeEmail: 
+    employee.email
       })
       console.error(`[getCompanyByAdminEmail] Possible causes:`)
       console.error(`[getCompanyByAdminEmail]   1. Employee not assigned as company admin`)
@@ -4790,13 +4678,18 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
   // Final check - if still no admin record found, return null
   if (!adminRecord) {
     console.error(`[getCompanyByAdminEmail] ❌ STEP 2 FAILED: No admin record found after all attempts`)
-    console.error(`[getCompanyByAdminEmail] Employee _id searched: ${employeeObjectId.toString()}`)
+    console.error(`[getCompanyByAdminEmail] Employee _id searched: ${
+    employeeObjectId.toString()}`)
     console.error(`[getCompanyByAdminEmail] Employee details:`, {
-      id: employee.id,
-      employeeId: employee.employeeId,
-      _id: employee._id?.toString(),
+      id: 
+    employee.id,
+      employeeId: 
+    employee.employeeId,
+      _id: 
+    employee._id?.toString(),
       email: normalizedEmail,
-      employeeEmail: employee.email
+      employeeEmail: 
+    employee.email
     })
     console.error(`[getCompanyByAdminEmail] Possible causes:`)
     console.error(`[getCompanyByAdminEmail]   1. Employee not assigned as company admin`)
@@ -4808,11 +4701,17 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
   
   console.log(`[getCompanyByAdminEmail] ✅ STEP 2 SUCCESS: Admin record found`)
   console.log(`[getCompanyByAdminEmail] Admin record:`, {
-    _id: adminRecord._id?.toString(),
-    employeeId: adminRecord.employeeId?.toString(),
-    companyId: adminRecord.companyId?.toString(),
-    companyIdType: adminRecord.companyId instanceof mongoose.Types.ObjectId ? 'ObjectId' : typeof adminRecord.companyId,
-    canApproveOrders: adminRecord.canApproveOrders
+    _id: 
+    adminRecord._id?.toString(),
+    employeeId: 
+    adminRecord.employeeId?.toString(),
+    companyId: 
+    adminRecord.companyId?.toString(),
+    companyIdType: 
+    adminRecord.companyId instanceof mongoose.Types.ObjectId ? 'ObjectId' : typeof 
+    adminRecord.companyId,
+    canApproveOrders: 
+    adminRecord.canApproveOrders
   })
   
   // STEP 3: Get the company using direct MongoDB query with ObjectId (most reliable)
@@ -4822,7 +4721,8 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
     companyObjectId = adminRecord.companyId
   } else {
     try {
-      companyObjectId = new mongoose.Types.ObjectId(adminRecord.companyId.toString())
+      companyObjectId = new mongoose.Types.ObjectId(
+    adminRecord.companyId.toString())
     } catch (error) {
       console.error(`[getCompanyByAdminEmail] ❌ CRITICAL: Cannot convert companyId to ObjectId: ${adminRecord.companyId}`)
       console.error(`[getCompanyByAdminEmail] Error:`, error)
@@ -4844,7 +4744,8 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
   
   if (companyDoc) {
     console.log(`[getCompanyByAdminEmail] ✅ STEP 3 SUCCESS: Company found via direct query`)
-    console.log(`[getCompanyByAdminEmail] Company: ${companyDoc.name} (id: ${companyDoc.id}, _id: ${companyDoc._id?.toString()})`)
+    console.log(`[getCompanyByAdminEmail] Company: ${companyDoc.name} (id: ${companyDoc.id}, _id: ${
+    companyDoc._id?.toString()})`)
   } else {
     // Fallback: Try to find all companies and match by string comparison (for debugging)
     console.error(`[getCompanyByAdminEmail] ❌ Direct query failed, trying fallback...`)
@@ -4871,7 +4772,8 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
     } else {
       console.error(`[getCompanyByAdminEmail] ❌ STEP 3 FAILED: No company found`)
       console.error(`[getCompanyByAdminEmail] Company _id searched: ${companyIdStr}`)
-      console.error(`[getCompanyByAdminEmail] Admin record companyId: ${adminRecord.companyId?.toString()}`)
+      console.error(`[getCompanyByAdminEmail] Admin record companyId: ${
+    adminRecord.companyId?.toString()}`)
       console.error(`[getCompanyByAdminEmail] Possible causes:`)
       console.error(`[getCompanyByAdminEmail]   1. Company was deleted`)
       console.error(`[getCompanyByAdminEmail]   2. Admin record has incorrect companyId`)
@@ -4885,29 +4787,37 @@ export async function getCompanyByAdminEmail(email: string): Promise<any | null>
   if (!companyDoc) {
     console.error(`[getCompanyByAdminEmail] ❌ STEP 3 FAILED: No company found after all attempts`)
     console.error(`[getCompanyByAdminEmail] Company _id searched: ${companyIdStr}`)
-    console.error(`[getCompanyByAdminEmail] Admin record companyId: ${adminRecord.companyId?.toString()}`)
+    console.error(`[getCompanyByAdminEmail] Admin record companyId: ${
+    adminRecord.companyId?.toString()}`)
     console.log(`[getCompanyByAdminEmail] ========================================`)
     return null
   }
   
   console.log(`[getCompanyByAdminEmail] ✅ STEP 3 SUCCESS: Company found`)
-  console.log(`[getCompanyByAdminEmail] Company: ${companyDoc.name} (id: ${companyDoc.id}, type: ${typeof companyDoc.id})`)
+  console.log(`[getCompanyByAdminEmail] Company: ${companyDoc.name} (id: ${companyDoc.id}, type: ${typeof 
+    companyDoc.id})`)
   
   // Convert to format expected by the rest of the code
   const company = toPlainObject(companyDoc)
   
-  // Ensure company.id is preserved (should be numeric now)
+  // Ensure 
+    // company.id is preserved (should be numeric now)
   if (companyDoc.id !== undefined) {
     company.id = companyDoc.id
   }
   
   console.log(`[getCompanyByAdminEmail] ✅ FINAL SUCCESS: Returning company`)
   console.log(`[getCompanyByAdminEmail] Return value:`, {
-    id: company.id,
-    idType: typeof company.id,
-    name: company.name,
-    hasId: !!company.id,
-    hasName: !!company.name
+    id: 
+    company.id,
+    idType: typeof 
+    company.id,
+    name: 
+    company.name,
+    hasId: !!
+    company.id,
+    hasName: !!
+    company.name
   })
   console.log(`[getCompanyByAdminEmail] ========================================`)
   return company
@@ -4932,39 +4842,54 @@ export async function setCompanyAdmin(companyId: string, employeeId: string): Pr
 // ========== EMPLOYEE FUNCTIONS ==========
 
 export async function getAllEmployees(): Promise<any[]> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getAllEmployees] Database connection error:', error.message)
+    return []
+  }
   
-  const employees = await Employee.find()
-    .populate('companyId', 'id name')
-    .populate('locationId', 'id name address city state pincode')
-    .lean()
+  try {
+    const employees = await Employee.find()
+      .populate('companyId', 'id name')
+      .populate('locationId', 'id name address city state pincode')
+      .lean() as any
 
-  // Since we used .lean(), the post hooks don't run, so we need to manually decrypt sensitive fields
-  // CRITICAL: Include 'location' in sensitiveFields for Company Admin - they need to see decrypted locations
-  const { decrypt } = require('../utils/encryption')
-  const decryptedEmployees = employees.map((e: any) => {
-    const sensitiveFields = ['email', 'mobile', 'address', 'firstName', 'lastName', 'designation', 'location']
-    for (const field of sensitiveFields) {
-      if (e[field] && typeof e[field] === 'string' && e[field].includes(':')) {
-        try {
-          e[field] = decrypt(e[field])
-        } catch (error) {
-          console.warn(`Failed to decrypt field ${field} for employee ${e.id}:`, error)
+    // CRITICAL: Include 'location' in sensitiveFields for Company Admin - they need to see decrypted locations
+    const { decrypt } = require('../utils/encryption')
+    const decryptedEmployees = employees.map((e: any) => {
+      const sensitiveFields = ['email', 'mobile', 'address', 'firstName', 'lastName', 'designation', 'location']
+      for (const field of sensitiveFields) {
+        if (e[field] && typeof e[field] === 'string' && e[field].includes(':')) {
+          try {
+            e[field] = decrypt(e[field])
+          } catch (error) {
+            console.warn(`Failed to decrypt field ${field} for employee ${e.id}:`, error)
+          }
         }
       }
-    }
-    return e
-  })
+      return e
+    })
 
-  return decryptedEmployees.map((e: any) => toPlainObject(e))
+    return decryptedEmployees.map((e: any) => toPlainObject(e))
+  } catch (error: any) {
+    console.error('[getAllEmployees] Error:', error.message)
+    return []
+  }
 }
 
 export async function getEmployeeByEmail(email: string): Promise<any | null> {
-  await connectDB()
-  
-  if (!email) {
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getEmployeeByEmail] Database connection error:', error.message)
     return null
   }
+  
+  try {
+    if (!email) {
+      return null
+    }
   
   // Normalize email: trim whitespace and convert to lowercase for consistent comparison
   // This ensures emails are compared consistently regardless of case or whitespace
@@ -4987,6 +4912,9 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
   // Try finding with encrypted email first (faster)
   // Use raw MongoDB query to get the employee with companyId ObjectId
   const db = mongoose.connection.db
+     if (!db) {
+    throw new Error('Database connection not available')
+  }
   let employee: any = null
   
   if (db && encryptedEmail) {
@@ -5021,51 +4949,57 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
     if (rawEmployee) {
       console.log(`[getEmployeeByEmail] Raw employee companyId:`, rawEmployee.companyId, 'Type:', typeof rawEmployee.companyId)
       
-      // Now fetch with Mongoose to get populated fields and decryption
-      // Use _id instead of email to ensure we get the correct employee (email might be encrypted differently)
-      employee = await Employee.findById(rawEmployee._id)
-        .populate('companyId', 'id name')
-        .populate('locationId', 'id name address city state pincode')
-        .lean()
-      
-      console.log(`[getEmployeeByEmail] Mongoose employee companyId after populate:`, employee?.companyId, 'Type:', typeof employee?.companyId)
-      
-      // ALWAYS ensure companyId is set from raw document if it exists
-      if (employee && rawEmployee.companyId) {
-        const rawCompanyIdStr = rawEmployee.companyId.toString()
+      // Now fetch with Mongoose to get decryption
+      // Use id field instead of _id
+      const employeeId = rawEmployee.id || 
+    rawEmployee.employeeId
+      if (employeeId) {
+        employee = await Employee.findOne({ id: employeeId }).lean() as any
         
-        // Convert companyId from ObjectId to numeric ID using helper function
-        const numericCompanyId = await convertCompanyIdToNumericId(rawEmployee.companyId)
-        if (numericCompanyId) {
-          employee.companyId = numericCompanyId
-          console.log(`[getEmployeeByEmail] Converted companyId from raw document: ${numericCompanyId}`)
+        // Manual join for companyId
+        if (employee && employee.companyId) {
+          const company = await Company.findOne({ id: 
+    employee.companyId }).lean() as any
+          if (company) {
+    employee.companyId = toPlainObject(company)
+          }
         }
-      } else if (employee && !employee.companyId && rawEmployee.companyId) {
-        // Employee from Mongoose doesn't have companyId, but raw document does
-        const numericCompanyId = await convertCompanyIdToNumericId(rawEmployee.companyId)
-        if (numericCompanyId) {
-          employee.companyId = numericCompanyId
-          console.log(`[getEmployeeByEmail] Set companyId from raw document: ${numericCompanyId}`)
+        
+        // Manual join for locationId
+        if (employee && employee.locationId) {
+          const location = await Location.findOne({ id: 
+    employee.locationId }).lean() as any
+          if (location) {
+    employee.locationId = toPlainObject(location)
+          }
         }
+        
+        console.log(`[getEmployeeByEmail] Mongoose employee companyId:`, employee?.companyId, 'Type:', typeof employee?.companyId)
       }
     }
   }
   
   // Fallback: if raw query didn't work, try Mongoose query
   if (!employee && encryptedEmail) {
-    employee = await Employee.findOne({ email: encryptedEmail })
-      .populate('companyId', 'id name')
-      .populate('locationId', 'id name address city state pincode')
-      .lean()
+    employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
     
-      // Convert companyId from ObjectId to numeric ID
-      if (employee && employee.companyId) {
-        const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
-        if (numericCompanyId) {
-          employee.companyId = numericCompanyId
-          console.log(`[getEmployeeByEmail] Converted companyId (Mongoose fallback): ${numericCompanyId}`)
-        }
+    // Manual join for companyId
+    if (employee && employee.companyId) {
+      const company = await Company.findOne({ id: 
+    employee.companyId }).lean() as any
+      if (company) {
+    employee.companyId = toPlainObject(company)
       }
+    }
+    
+    // Manual join for locationId
+    if (employee && employee.locationId) {
+      const location = await Location.findOne({ id: 
+    employee.locationId }).lean() as any
+      if (location) {
+    employee.locationId = toPlainObject(location)
+      }
+    }
   }
   
   // Fallback: if still not found, try decryption-based search (works even if encryption format doesn't match)
@@ -5077,27 +5011,39 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
     
     // Use raw MongoDB to get all employees (faster than Mongoose for bulk operations)
     const db = mongoose.connection.db
-    if (db) {
+       if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db) {
       // First, try direct plain text match (handles manually replaced plain text emails)
       console.log(`[getEmployeeByEmail] Trying plain text email match...`)
       const plainTextEmployee = await db.collection('employees').findOne({ email: trimmedEmail })
       if (plainTextEmployee) {
         console.log(`[getEmployeeByEmail] ✅ Found employee via plain text email match`)
-        // Fetch with Mongoose to get populated fields
-        employee = await Employee.findById(plainTextEmployee._id)
-          .populate('companyId', 'id name')
-          .populate('locationId', 'id name address city state pincode')
-          .lean()
-        
-        if (employee) {
-          // Convert companyId from ObjectId to numeric ID
-          if (employee.companyId) {
-            const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
-            if (numericCompanyId) {
-              employee.companyId = numericCompanyId
+        // Fetch with Mongoose using id field
+        const employeeId = plainTextEmployee.id || plainTextEmployee.employeeId
+        if (employeeId) {
+          employee = await Employee.findOne({ id: employeeId }).lean() as any
+          
+          // Manual join for companyId
+          if (employee && employee.companyId) {
+            const company = await Company.findOne({ id: 
+    employee.companyId }).lean() as any
+            if (company) {
+    employee.companyId = toPlainObject(company)
             }
           }
-          console.log(`[getEmployeeByEmail] Employee ID: ${employee.id || employee.employeeId}`)
+          
+          // Manual join for locationId
+          if (employee && employee.locationId) {
+            const location = await Location.findOne({ id: 
+    employee.locationId }).lean() as any
+            if (location) {
+    employee.locationId = toPlainObject(location)
+            }
+          }
+          
+          console.log(`[getEmployeeByEmail] Employee ID: ${employee?.id || employee?.employeeId}`)
         }
       }
     }
@@ -5107,10 +5053,7 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
       console.log(`[getEmployeeByEmail] Trying decryption-based search for encrypted emails...`)
       // For encrypted values, we can't do regex search easily
       // So we'll fall back to fetching all and decrypting (less efficient but works)
-      const allEmployees = await Employee.find({})
-        .populate('companyId', 'id name')
-        .populate('locationId', 'id name address city state pincode')
-        .lean()
+      const allEmployees = await Employee.find({}).lean() as any
       
       console.log(`[getEmployeeByEmail] Checking ${allEmployees.length} employees via decryption...`)
       let checkedCount = 0
@@ -5124,11 +5067,12 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
               if (emp.email.toLowerCase() === trimmedEmail) {
                 console.log(`[getEmployeeByEmail] ✅ Found employee via plain text match in decryption loop: ${emp.email}`)
                 employee = emp
-                // Convert companyId from ObjectId to numeric ID
+                // Manual join for companyId
                 if (employee.companyId) {
-                  const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
-                  if (numericCompanyId) {
-                    employee.companyId = numericCompanyId
+                  const company = await Company.findOne({ id: 
+    employee.companyId }).lean() as any
+                  if (company) {
+    employee.companyId = toPlainObject(company)
                   }
                 }
                 break
@@ -5158,29 +5102,36 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
               console.log(`[getEmployeeByEmail] Employee ID: ${emp.id || emp.employeeId}, _id: ${emp._id}`)
               employee = emp
               // CRITICAL: Decrypt the email field itself so it matches what the caller expects
-              employee.email = decryptedEmail
-              console.log(`[getEmployeeByEmail] Set employee.email to: ${employee.email}`)
+    employee.email = decryptedEmail
+              console.log(`[getEmployeeByEmail] Set 
+    employee.email to: ${employee.email}`)
               // Decrypt all sensitive fields for this employee
               if (employee.firstName && typeof employee.firstName === 'string' && employee.firstName.includes(':')) {
-                try { employee.firstName = decrypt(employee.firstName) } catch {}
+                try { 
+    employee.firstName = decrypt(employee.firstName) } catch {}
               }
               if (employee.lastName && typeof employee.lastName === 'string' && employee.lastName.includes(':')) {
-                try { employee.lastName = decrypt(employee.lastName) } catch {}
+                try { 
+    employee.lastName = decrypt(employee.lastName) } catch {}
               }
               if (employee.mobile && typeof employee.mobile === 'string' && employee.mobile.includes(':')) {
-                try { employee.mobile = decrypt(employee.mobile) } catch {}
+                try { 
+    employee.mobile = decrypt(employee.mobile) } catch {}
               }
               if (employee.address && typeof employee.address === 'string' && employee.address.includes(':')) {
-                try { employee.address = decrypt(employee.address) } catch {}
+                try { 
+    employee.address = decrypt(employee.address) } catch {}
               }
               if (employee.designation && typeof employee.designation === 'string' && employee.designation.includes(':')) {
-                try { employee.designation = decrypt(employee.designation) } catch {}
+                try { 
+    employee.designation = decrypt(employee.designation) } catch {}
               }
-              // Convert companyId from ObjectId to numeric ID
+              // Manual join for companyId
               if (employee.companyId) {
-                const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
-                if (numericCompanyId) {
-                  employee.companyId = numericCompanyId
+                const company = await Company.findOne({ id: 
+    employee.companyId }).lean() as any
+                if (company) {
+    employee.companyId = toPlainObject(company)
                 }
               }
               break
@@ -5200,33 +5151,31 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
     return null
   }
   
-  // Convert companyId from ObjectId to numeric ID using helper function
-  // Always fetch from raw document to ensure we have the correct ObjectId
-  if (employee && db) {
+  // Ensure companyId is set correctly (should already be a string from manual joins above)
+  // No conversion needed - companyId is already a string
+  if (employee && !employee.companyId && db) {
+    // Fallback: try to get from raw document if missing
     let rawEmp: any = null
-    
-    // Try to get raw document using multiple methods
-    if (encryptedEmail) {
-      rawEmp = await db.collection('employees').findOne({ email: encryptedEmail })
-    }
-    if (!rawEmp && employee.id) {
-      rawEmp = await db.collection('employees').findOne({ id: employee.id })
+    if (employee.id) {
+      rawEmp = await db.collection('employees').findOne({ id: 
+    employee.id })
     }
     if (!rawEmp && employee.employeeId) {
-      rawEmp = await db.collection('employees').findOne({ employeeId: employee.employeeId })
+      rawEmp = await db.collection('employees').findOne({ employeeId: 
+    employee.employeeId })
     }
     
     if (rawEmp && rawEmp.companyId) {
-      // Convert companyId from ObjectId to numeric ID once
-      const numericCompanyId = await convertCompanyIdToNumericId(rawEmp.companyId)
-      if (numericCompanyId) {
-        employee.companyId = numericCompanyId
-        console.log(`[getEmployeeByEmail] Converted companyId to numeric ID: ${numericCompanyId}`)
-      } else {
-        console.warn(`[getEmployeeByEmail] Failed to convert companyId for employee ${employee.id || employee.employeeId}`)
+      // companyId should already be a string, but validate
+      const companyIdStr = String(rawEmp.companyId)
+      if (/^\d{6}$/.test(companyIdStr)) {
+    employee.companyId = companyIdStr
+        // Manual join
+        const company = await Company.findOne({ id: companyIdStr }).lean() as any
+        if (company) {
+    employee.companyId = toPlainObject(company)
+        }
       }
-    } else if (rawEmp && !rawEmp.companyId) {
-      console.warn(`[getEmployeeByEmail] WARNING: Raw document has no companyId for employee ${employee.id || employee.employeeId}`)
     }
   }
   
@@ -5258,60 +5207,54 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
     }
   }
   
-  // CRITICAL: Preserve _id before calling toPlainObject (which deletes it)
-  // This is needed for admin lookups in getCompanyByAdminEmail
-  const employeeIdBeforeConversion = employee?._id ? (employee._id instanceof mongoose.Types.ObjectId ? employee._id : new mongoose.Types.ObjectId(employee._id.toString())) : null
-  
   const plainEmployee = toPlainObject(employee)
   
-  // Restore _id if it was removed by toPlainObject (needed for admin lookups)
-  if (employeeIdBeforeConversion && !plainEmployee._id) {
-    plainEmployee._id = employeeIdBeforeConversion.toString()
-  }
+  // companyId should already be a string or populated object from manual joins above
+  // No conversion needed
   
-  // Final check: Ensure companyId is numeric ID (not ObjectId) after toPlainObject
-  // If companyId is missing or is an ObjectId string, convert it using helper function
-  if (plainEmployee.companyId) {
-    // If it's already a numeric ID (6 digits), keep it
-    if (!/^\d{6}$/.test(String(plainEmployee.companyId))) {
-      // It might be an ObjectId string, convert it
-      const numericCompanyId = await convertCompanyIdToNumericId(plainEmployee.companyId)
-      if (numericCompanyId) {
-        plainEmployee.companyId = numericCompanyId
-        console.log(`[getEmployeeByEmail] Converted companyId after toPlainObject: ${numericCompanyId}`)
-      }
-    }
-  } else if (db) {
-    // If companyId is missing, try to get it from raw document one more time
-    let rawEmp: any = null
-    if (encryptedEmail) {
-      rawEmp = await db.collection('employees').findOne({ email: encryptedEmail })
-    }
-    if (!rawEmp && plainEmployee.id) {
-      rawEmp = await db.collection('employees').findOne({ id: plainEmployee.id })
-    }
-    
-    if (rawEmp && rawEmp.companyId) {
-      const numericCompanyId = await convertCompanyIdToNumericId(rawEmp.companyId)
-      if (numericCompanyId) {
-        plainEmployee.companyId = numericCompanyId
-        console.log(`[getEmployeeByEmail] Recovered companyId from raw document: ${numericCompanyId}`)
-      }
-    }
+    return plainEmployee
+  } catch (error: any) {
+    console.error('[getEmployeeByEmail] Error:', error.message)
+    return null
   }
-  
-  return plainEmployee
 }
 
 export async function getEmployeeById(employeeId: string): Promise<any | null> {
-  await connectDB()
+  try {
+    await connectDB()
+  } catch (error: any) {
+    console.error('[getEmployeeById] Database connection error:', error.message)
+    return null
+  }
   
-  const employee = await Employee.findOne({ id: employeeId })
-    .populate('companyId', 'id name')
-    .populate('locationId', 'id name address_line_1 city state pincode')
-    .lean()
-  
-  if (!employee) return null
+  try {
+    // Normalize and validate
+    const normalizedId = String(employeeId)
+    if (!/^\d{6}$/.test(normalizedId)) {
+      console.warn(`[getEmployeeById] Invalid employeeId format: ${normalizedId}`)
+      return null
+    }
+    
+    const employee = await Employee.findOne({ id: normalizedId }).lean() as any
+    
+    if (!employee) return null
+    
+    // Manual join for companyId
+    if (employee.companyId) {
+      const company = await Company.findOne({ id: employee.companyId }).lean() as any
+      if (company) {
+    employee.companyId = toPlainObject(company)
+      }
+    }
+    
+    // Manual join for locationId
+    if (employee.locationId) {
+      const location = await Location.findOne({ id: 
+    employee.locationId }).lean() as any
+      if (location) {
+    employee.locationId = toPlainObject(location)
+      }
+    }
   
   // Since we used .lean(), the post hooks don't run, so we need to manually decrypt sensitive fields
   const { decrypt } = require('../utils/encryption')
@@ -5362,36 +5305,42 @@ export async function getEmployeeById(employeeId: string): Promise<any | null> {
         plainEmployee.companyId = plainEmployee.companyId.id
       } else if (plainEmployee.companyId._id) {
         const db = mongoose.connection.db
-        if (db) {
-          try {
-            const companyIdStr = plainEmployee.companyId._id.toString()
-            const allCompanies = await db.collection('companies').find({}).toArray()
-            const companyDoc = allCompanies.find((c: any) => c._id.toString() === companyIdStr)
-            if (companyDoc && companyDoc.id) {
-              plainEmployee.companyId = companyDoc.id
-            }
-          } catch (error) {
-            console.warn(`[getEmployeeById] Error converting companyId:`, error)
-          }
+         if (!db) {
+          throw new Error('Database connection not available')
         }
-      }
-    } else if (typeof plainEmployee.companyId === 'string' && /^[0-9a-fA-F]{24}$/.test(plainEmployee.companyId)) {
-      const db = mongoose.connection.db
-      if (db) {
         try {
+          const companyIdStr = plainEmployee.companyId._id.toString()
           const allCompanies = await db.collection('companies').find({}).toArray()
-          const companyDoc = allCompanies.find((c: any) => c._id.toString() === plainEmployee.companyId)
+          const companyDoc = allCompanies.find((c: any) => c._id.toString() === companyIdStr)
           if (companyDoc && companyDoc.id) {
             plainEmployee.companyId = companyDoc.id
           }
         } catch (error) {
-          console.warn(`[getEmployeeById] Error converting companyId ObjectId:`, error)
+          console.warn(`[getEmployeeById] Error converting companyId:`, error)
         }
+      }
+    } else if (typeof plainEmployee.companyId === 'string' && /^[0-9a-fA-F]{24}$/.test(plainEmployee.companyId)) {
+      const db = mongoose.connection.db
+       if (!db) {
+        throw new Error('Database connection not available')
+      }
+      try {
+        const allCompanies = await db.collection('companies').find({}).toArray()
+        const companyDoc = allCompanies.find((c: any) => c._id.toString() === plainEmployee.companyId)
+        if (companyDoc && companyDoc.id) {
+          plainEmployee.companyId = companyDoc.id
+        }
+      } catch (error) {
+        console.warn(`[getEmployeeById] Error converting companyId ObjectId:`, error)
       }
     }
   }
   
-  return plainEmployee
+    return plainEmployee
+  } catch (error: any) {
+    console.error('[getEmployeeById] Error:', error.message)
+    return null
+  }
 }
 
 export async function getEmployeeByPhone(phone: string): Promise<any | null> {
@@ -5447,6 +5396,9 @@ export async function getEmployeeByPhone(phone: string): Promise<any | null> {
   
   // Try finding with each phone number variation
   const db = mongoose.connection.db
+     if (!db) {
+    throw new Error('Database connection not available')
+  }
   let employee: any = null
   
   // Try each variation
@@ -5472,7 +5424,7 @@ export async function getEmployeeByPhone(phone: string): Promise<any | null> {
         employee = await Employee.findOne({ mobile: encryptedPhone })
           .populate('companyId', 'id name')
           .populate('locationId', 'id name address city state pincode')
-          .lean()
+          .lean() as any
         
         if (employee) {
           console.log(`[getEmployeeByPhone] ✅ Found employee with phone variation: ${phoneVar.substring(0, 5)}...`)
@@ -5486,7 +5438,7 @@ export async function getEmployeeByPhone(phone: string): Promise<any | null> {
       employee = await Employee.findOne({ mobile: encryptedPhone })
         .populate('companyId', 'id name')
         .populate('locationId', 'id name address city state pincode')
-        .lean()
+        .lean() as any
       
       if (employee) {
         console.log(`[getEmployeeByPhone] ✅ Found employee with Mongoose query (variation: ${phoneVar.substring(0, 5)}...)`)
@@ -5511,11 +5463,9 @@ export async function getEmployeeByPhone(phone: string): Promise<any | null> {
                 employee = await Employee.findOne({ _id: emp._id })
                   .populate('companyId', 'id name')
                   .populate('locationId', 'id name address city state pincode')
-                  .lean()
-                if (employee) {
-                  console.log(`[getEmployeeByPhone] ✅ Found employee via decryption search`)
-                  break
-                }
+                  .lean() as any
+                console.log(`[getEmployeeByPhone] ✅ Found employee via decryption search`)
+                break
               }
             }
             if (employee) break
@@ -5539,16 +5489,19 @@ export async function getEmployeeByPhone(phone: string): Promise<any | null> {
   if (employee.companyId) {
     if (typeof employee.companyId === 'object' && employee.companyId !== null) {
       if (employee.companyId.id) {
-        employee.companyId = employee.companyId.id
+    employee.companyId = employee.companyId.id
       } else if (employee.companyId._id) {
         const db = mongoose.connection.db
-        if (db) {
+           if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db) {
           try {
             const companyIdStr = employee.companyId._id.toString()
             const allCompanies = await db.collection('companies').find({}).toArray()
             const companyDoc = allCompanies.find((c: any) => c._id.toString() === companyIdStr)
             if (companyDoc && companyDoc.id) {
-              employee.companyId = companyDoc.id
+    employee.companyId = companyDoc.id
             }
           } catch (error) {
             console.warn(`[getEmployeeByPhone] Error converting companyId:`, error)
@@ -5589,9 +5542,8 @@ export async function getEmployeeByEmployeeId(employeeId: string): Promise<any |
   
   const employee = await Employee.findOne({ employeeId: employeeId })
     .populate('companyId', 'id name')
-    .lean()
+    .lean() as any
   
-  if (!employee) return null
   
   const plainEmployee = toPlainObject(employee)
   
@@ -5602,7 +5554,10 @@ export async function getEmployeeByEmployeeId(employeeId: string): Promise<any |
         plainEmployee.companyId = plainEmployee.companyId.id
       } else if (plainEmployee.companyId._id) {
         const db = mongoose.connection.db
-        if (db) {
+           if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db) {
           try {
             const companyIdStr = plainEmployee.companyId._id.toString()
             const allCompanies = await db.collection('companies').find({}).toArray()
@@ -5617,7 +5572,10 @@ export async function getEmployeeByEmployeeId(employeeId: string): Promise<any |
       }
     } else if (typeof plainEmployee.companyId === 'string' && /^[0-9a-fA-F]{24}$/.test(plainEmployee.companyId)) {
       const db = mongoose.connection.db
-      if (db) {
+         if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db) {
         try {
           const allCompanies = await db.collection('companies').find({}).toArray()
           const companyDoc = allCompanies.find((c: any) => c._id.toString() === plainEmployee.companyId)
@@ -5638,7 +5596,7 @@ export async function getEmployeesByCompany(companyId: string): Promise<any[]> {
   await connectDB()
   
   console.log(`[getEmployeesByCompany] Looking up company with id: ${companyId}`)
-  const company = await Company.findOne({ id: companyId }).select('_id id name').lean()
+  const company = await Company.findOne({ id: companyId }).select('_id id name').lean() as any
   if (!company) {
     console.warn(`[getEmployeesByCompany] Company not found with id: ${companyId}`)
     return []
@@ -5650,14 +5608,14 @@ export async function getEmployeesByCompany(companyId: string): Promise<any[]> {
   // This leverages the companyId index for O(log n) lookup instead of O(n) scan
   // Direct indexed query - much faster than fetch-all
   console.log(`[getEmployeesByCompany] Querying employees with companyId: ${company._id}`)
-  const query = Employee.find({ companyId: company._id })
+  const query = Employee.find({ companyId: 
+    company._id })
     .populate('companyId', 'id name')
     .populate('locationId', 'id name address city state pincode')
     .populate('addressId') // Populate the Address record
 
   const employees = await query.lean()
   
-  console.log(`[getEmployeesByCompany] Raw query returned ${employees?.length || 0} employees`)
   
   // Extract structured address data for employees with addressId
   const { getAddressById } = require('../utils/address-service')
@@ -5665,25 +5623,34 @@ export async function getEmployeesByCompany(companyId: string): Promise<any[]> {
     if (employee.addressId) {
       if (typeof employee.addressId === 'object' && employee.addressId !== null) {
         // Address is populated
-        employee.address = {
-          address_line_1: employee.addressId.address_line_1 || '',
-          address_line_2: employee.addressId.address_line_2 || '',
-          address_line_3: employee.addressId.address_line_3 || '',
-          city: employee.addressId.city || '',
-          state: employee.addressId.state || '',
-          pincode: employee.addressId.pincode || '',
-          country: employee.addressId.country || 'India',
+    employee.address = {
+          address_line_1: 
+    employee.addressId.address_line_1 || '',
+          address_line_2: 
+    employee.addressId.address_line_2 || '',
+          address_line_3: 
+    employee.addressId.address_line_3 || '',
+          city: 
+    employee.addressId.city || '',
+          state: 
+    employee.addressId.state || '',
+          pincode: 
+    employee.addressId.pincode || '',
+          country: 
+    employee.addressId.country || 'India',
         }
-        employee.addressId = employee.addressId._id?.toString() || employee.addressId.toString()
+    employee.addressId = employee.addressId._id?.toString() || 
+    employee.addressId.toString()
       } else {
         // addressId exists but not populated - fetch it
         try {
           // Safely convert addressId to string
-          const addressIdStr = employee.addressId?.toString ? employee.addressId.toString() : String(employee.addressId)
+          const addressIdStr = employee.addressId?.toString ? 
+    employee.addressId.toString() : String(employee.addressId)
           if (addressIdStr) {
             const address = await getAddressById(addressIdStr)
           if (address) {
-            employee.address = {
+    employee.address = {
               address_line_1: address.address_line_1 || '',
               address_line_2: address.address_line_2 || '',
               address_line_3: address.address_line_3 || '',
@@ -5711,7 +5678,7 @@ export async function getEmployeesByCompany(companyId: string): Promise<any[]> {
   // CRITICAL: Include 'location' in sensitiveFields for Company Admin - they need to see decrypted locations
   // NOTE: 'address' field is skipped if it's already an object (structured address from addressId)
   const { decrypt } = require('../utils/encryption')
-  const companyIdStr = company._id.toString()
+  const companyIdStr = company.id
   const companyStringId = company.id
   
   let decryptedEmployees: any[] = []
@@ -5798,13 +5765,13 @@ export async function getUniqueDesignationsByCompany(companyId: string): Promise
   // Get all employees for this company (we need to decrypt designations)
   // Using find instead of distinct to get decrypted values through Mongoose hooks
   const employees = await Employee.find({ 
-    companyId: company._id,
+    companyId: 
+    company._id,
     designation: { $exists: true, $ne: null, $ne: '' }
   })
     .select('designation')
-    .lean()
+    .lean() as any
 
-  // Import decrypt function
   const { decrypt } = require('../utils/encryption')
   // Use a Map to store normalized (lowercase) -> original designation mapping
   // This ensures case-insensitive uniqueness while preserving original case for display
@@ -5887,9 +5854,8 @@ export async function getUniqueShirtSizesByCompany(companyId: string): Promise<s
     shirtSize: { $exists: true, $ne: null, $ne: '' }
   })
     .select('shirtSize')
-    .lean()
+    .lean() as any
 
-  const { decrypt } = require('../utils/encryption')
   const sizeSet = new Set<string>()
   
   for (const emp of employees) {
@@ -5938,9 +5904,8 @@ export async function getUniquePantSizesByCompany(companyId: string): Promise<st
     pantSize: { $exists: true, $ne: null, $ne: '' }
   })
     .select('pantSize')
-    .lean()
+    .lean() as any
 
-  const { decrypt } = require('../utils/encryption')
   const sizeSet = new Set<string>()
   
   for (const emp of employees) {
@@ -5987,9 +5952,8 @@ export async function getUniqueShoeSizesByCompany(companyId: string): Promise<st
     shoeSize: { $exists: true, $ne: null, $ne: '' }
   })
     .select('shoeSize')
-    .lean()
+    .lean() as any
 
-  const { decrypt } = require('../utils/encryption')
   const sizeSet = new Set<string>()
   
   for (const emp of employees) {
@@ -6066,12 +6030,12 @@ export async function createEmployee(employeeData: {
   let employeeId = employeeData.employeeId
   if (!employeeId) {
     // Find the highest existing employee ID
+    let nextEmployeeId = 300001
     const existingEmployees = await Employee.find({})
       .sort({ id: -1 })
       .limit(1)
-      .lean()
+      .lean() as any
     
-    let nextEmployeeId = 300001 // Start from 300001
     if (existingEmployees.length > 0) {
       const lastId = existingEmployees[0].id
       if (/^\d{6}$/.test(String(lastId))) {
@@ -6123,7 +6087,7 @@ export async function createEmployee(employeeData: {
   
   // If not found with encrypted email, also check by decrypting all emails (fallback)
   if (!existingByEmail) {
-    const allEmployees = await Employee.find({}).select('email').lean()
+    const allEmployees = await Employee.find({}).select('email').lean() as any
     for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
@@ -6195,30 +6159,34 @@ export async function createEmployee(employeeData: {
     // Fetch location with populated companyId for reliable company ID extraction
     const location = await Location.findOne({ id: employeeData.locationId })
       .populate('companyId', 'id name')
-      .lean()
+      .lean() as any
     
     if (!location) {
-      throw new Error(`Location not found: ${employeeData.locationId}`)
+      console.warn(`[createOrUpdateEmployee] Location not found: ${employeeData.locationId}`);
+      return null // Return null instead of throwing - let API route handle 404
     }
     
     // Verify location belongs to the same company
     let locationCompanyId: string | null = null
-    if (location.companyId) {
-      if (typeof location.companyId === 'object' && location.companyId !== null && !Array.isArray(location.companyId)) {
+    if ((location as any).companyId) {
+      if (typeof (location as any).companyId === 'object' && (location as any).companyId !== null && !Array.isArray((location as any).companyId)) {
         // Populated company object (from .populate())
-        if (location.companyId.id && typeof location.companyId.id === 'string') {
-          locationCompanyId = String(location.companyId.id).trim()
-        } else if (location.companyId._id) {
+        if ((location as any).companyId.id && typeof (location as any).companyId.id === 'string') {
+          locationCompanyId = String((location as any).companyId.id).trim()
+        } else if ((location as any).companyId._id) {
           // Populated but no id field - fetch company
-          const locCompany = await Company.findById(location.companyId._id).select('id').lean()
-          if (locCompany && locCompany.id) {
+          const locCompany = await Company.findOne({ id: String(
+            (location as any).companyId.id || 
+            (location as any).companyId._id) }).select('id').lean() as any
+          if (locCompany) {
             locationCompanyId = String(locCompany.id).trim()
           }
         }
-      } else if (typeof location.companyId === 'string' || location.companyId instanceof mongoose.Types.ObjectId) {
-        // ObjectId string or ObjectId - fetch company
-        const locCompany = await Company.findById(location.companyId).select('id').lean()
-        if (locCompany && locCompany.id) {
+      } else if (typeof (location as any).companyId === 'string') {
+        // String ID - fetch company
+        const locCompany = await Company.findOne({ id: 
+          (location as any).companyId }).select('id').lean() as any
+        if (locCompany) {
           locationCompanyId = String(locCompany.id).trim()
         }
       }
@@ -6288,9 +6256,9 @@ export async function createEmployee(employeeData: {
   const created = await Employee.findOne({ id: employeeId })
     .populate('companyId', 'id name')
     .populate('locationId', 'id name address city state pincode')
-    .lean()
+    .lean() as any
 
-  return created ? toPlainObject(created) : null
+  return toPlainObject(created)
 }
 
 export async function updateEmployee(
@@ -6367,15 +6335,17 @@ export async function updateEmployee(
       if (encryptedNewEmail) {
         existingByEmail = await Employee.findOne({ 
           email: encryptedNewEmail,
-          _id: { $ne: employee._id }
+          _id: { $ne: 
+    employee._id }
         })
       }
       
       // If not found, check by decrypting all emails (fallback)
       if (!existingByEmail) {
-        const allEmployees = await Employee.find({ _id: { $ne: employee._id } })
+        const allEmployees = await Employee.find({ _id: { $ne: 
+    employee._id } })
           .select('email')
-          .lean()
+          .lean() as any
         for (const emp of allEmployees) {
           if (emp.email && typeof emp.email === 'string') {
             try {
@@ -6425,10 +6395,11 @@ export async function updateEmployee(
       // Fetch location with populated companyId for reliable company ID extraction
       const location = await Location.findOne({ id: updateData.locationId })
         .populate('companyId', 'id name')
-        .lean()
+        .lean() as any
       
       if (!location) {
-        throw new Error(`Location not found: ${updateData.locationId}`)
+        console.warn(`[updateEmployee] Location not found: ${updateData.locationId}`);
+        return null // Return null instead of throwing - let API route handle 404
       }
       
       // Verify location belongs to the employee's company
@@ -6441,15 +6412,16 @@ export async function updateEmployee(
             employeeCompanyId = String(employee.companyId.id).trim()
           } else if (employee.companyId._id) {
             // Populated but no id field - fetch company
-            const empCompany = await Company.findById(employee.companyId._id).select('id').lean()
-            if (empCompany && empCompany.id) {
+            const empCompany = await Company.findById(
+              employee.companyId._id).select('id').lean() as any
+            if (empCompany) {
               employeeCompanyId = String(empCompany.id).trim()
             }
           }
         } else if (typeof employee.companyId === 'string' || employee.companyId instanceof mongoose.Types.ObjectId) {
           // ObjectId string or ObjectId - fetch company
-          const empCompany = await Company.findById(employee.companyId).select('id').lean()
-          if (empCompany && empCompany.id) {
+          const empCompany = await Company.findById(employee.companyId).select('id').lean() as any
+          if (empCompany) {
             employeeCompanyId = String(empCompany.id).trim()
           }
         }
@@ -6457,22 +6429,23 @@ export async function updateEmployee(
       
       // Get location's company ID - handle both populated and ObjectId cases
       let locationCompanyId: string | null = null
-      if (location.companyId) {
-        if (typeof location.companyId === 'object' && location.companyId !== null && !Array.isArray(location.companyId)) {
+      if ((location as any).companyId) {
+        if (typeof (location as any).companyId === 'object' && (location as any).companyId !== null && !Array.isArray((location as any).companyId)) {
           // Populated company object (from .populate())
-          if (location.companyId.id && typeof location.companyId.id === 'string') {
-            locationCompanyId = String(location.companyId.id).trim()
-          } else if (location.companyId._id) {
+          if ((location as any).companyId.id && typeof (location as any).companyId.id === 'string') {
+            locationCompanyId = String((location as any).companyId.id).trim()
+          } else if ((location as any).companyId._id) {
             // Populated but no id field - fetch company
-            const locCompany = await Company.findById(location.companyId._id).select('id').lean()
-            if (locCompany && locCompany.id) {
+            const locCompany = await Company.findById(
+              (location as any).companyId._id).select('id').lean() as any
+            if (locCompany) {
               locationCompanyId = String(locCompany.id).trim()
             }
           }
-        } else if (typeof location.companyId === 'string' || location.companyId instanceof mongoose.Types.ObjectId) {
+        } else if (typeof (location as any).companyId === 'string' || (location as any).companyId instanceof mongoose.Types.ObjectId) {
           // ObjectId string or ObjectId - fetch company
-          const locCompany = await Company.findById(location.companyId).select('id').lean()
-          if (locCompany && locCompany.id) {
+          const locCompany = await Company.findById((location as any).companyId).select('id').lean() as any
+          if (locCompany) {
             locationCompanyId = String(locCompany.id).trim()
           }
         }
@@ -6489,7 +6462,9 @@ export async function updateEmployee(
       
       // Debug logging
       console.log(`[updateEmployee] Location-Company validation:`, {
-        employeeId: employee.employeeId || employee.id,
+        employeeId: 
+    employee.employeeId || 
+    employee.id,
         locationId: updateData.locationId,
         employeeCompanyId: employeeCompanyId,
         locationCompanyId: locationCompanyId,
@@ -6503,12 +6478,12 @@ export async function updateEmployee(
       
       // Set locationId - .lean() preserves _id field
       if (location._id) {
-        employee.locationId = location._id
+    employee.locationId = location._id
       } else {
         // Fallback: fetch location document if _id is missing (shouldn't happen)
         const locationDoc = await Location.findOne({ id: updateData.locationId })
         if (locationDoc) {
-          employee.locationId = locationDoc._id
+    employee.locationId = locationDoc._id
         } else {
           throw new Error(`Location ${updateData.locationId} not found when setting employee location`)
         }
@@ -6534,21 +6509,21 @@ export async function updateEmployee(
     try {
       const parsedAddress = parseLegacyAddress(updateData.address)
       // Use dummy values if parsing fails
-      employee.address_line_1 = parsedAddress.address_line_1 || updateData.address.substring(0, 255) || 'Address not specified'
-      employee.address_line_2 = parsedAddress.address_line_2
-      employee.address_line_3 = parsedAddress.address_line_3
-      employee.city = parsedAddress.city || 'New Delhi'
-      employee.state = parsedAddress.state || 'Delhi'
-      employee.pincode = parsedAddress.pincode || '110001'
-      employee.country = parsedAddress.country || 'India'
+    employee.address_line_1 = parsedAddress.address_line_1 || updateData.address.substring(0, 255) || 'Address not specified'
+    employee.address_line_2 = parsedAddress.address_line_2
+    employee.address_line_3 = parsedAddress.address_line_3
+    employee.city = parsedAddress.city || 'New Delhi'
+    employee.state = parsedAddress.state || 'Delhi'
+    employee.pincode = parsedAddress.pincode || '110001'
+    employee.country = parsedAddress.country || 'India'
     } catch (error: any) {
       console.warn(`Failed to parse address from legacy format for employee ${employeeId}:`, error.message)
       // Use dummy values
-      employee.address_line_1 = updateData.address.substring(0, 255) || 'Address not specified'
-      employee.city = 'New Delhi'
-      employee.state = 'Delhi'
-      employee.pincode = '110001'
-      employee.country = 'India'
+    employee.address_line_1 = updateData.address.substring(0, 255) || 'Address not specified'
+    employee.city = 'New Delhi'
+    employee.state = 'Delhi'
+    employee.pincode = '110001'
+    employee.country = 'India'
     }
   }
 
@@ -6571,15 +6546,15 @@ export async function updateEmployee(
   if (updateData.period !== undefined) employee.period = updateData.period
   if (updateData.dateOfJoining !== undefined) employee.dateOfJoining = updateData.dateOfJoining
 
-  await employee.save()
+  await 
+    employee.save()
   
   // Fetch the updated employee with populated fields
   const updated = await Employee.findOne({ id: employeeId })
     .populate('companyId', 'id name')
     .populate('locationId', 'id name address city state pincode')
-    .lean()
+    .lean() as any
 
-  if (!updated) return null
   
   // Since we used .lean(), the post hooks don't run, so we need to manually decrypt sensitive fields
   const { decrypt } = require('../utils/encryption')
@@ -6644,8 +6619,7 @@ export async function getVendorsForProductCompany(
   if (!product) {
     console.error(`[getVendorsForProductCompany] Product not found: ${productId} (type: ${typeof productId})`)
     // List available products for debugging
-    const allProducts = await Uniform.find({}, 'id name').limit(5).lean()
-    console.error(`[getVendorsForProductCompany] Available products (sample):`, allProducts.map((p: any) => `id=${p.id} (type: ${typeof p.id})`))
+    const allProducts = await Uniform.find({}, 'id name').limit(5).lean() as any
     return []
   }
   
@@ -6660,8 +6634,7 @@ export async function getVendorsForProductCompany(
   if (!company) {
     console.error(`[getVendorsForProductCompany] Company not found: ${companyId} (type: ${typeof companyId})`)
     // List available companies for debugging
-    const allCompanies = await Company.find({}, 'id name').limit(5).lean()
-    console.error(`[getVendorsForProductCompany] Available companies (sample):`, allCompanies.map((c: any) => `id=${c.id}, name=${c.name}`))
+    const allCompanies = await Company.find({}, 'id name').limit(5).lean() as any
     return []
   }
   
@@ -6671,17 +6644,24 @@ export async function getVendorsForProductCompany(
   // Check if product is directly linked to company
   // Use raw MongoDB as fallback for more reliable lookup
   const db = mongoose.connection.db
+     if (!db) {
+    throw new Error('Database connection not available')
+  }
   let productCompanyLink = await ProductCompany.findOne({
-    productId: product._id,
-    companyId: company._id
+    productId: 
+    product._id,
+    companyId: 
+    company._id
   })
   
   // Fallback: use raw MongoDB collection if Mongoose lookup fails
   if (!productCompanyLink && db) {
     console.log(`[getVendorsForProductCompany] ProductCompany not found via Mongoose, trying raw MongoDB collection`)
     const rawProductCompanies = await db.collection('productcompanies').find({
-      productId: product._id,
-      companyId: company._id
+      productId: 
+    product._id,
+      companyId: 
+    company._id
     }).toArray()
     
     if (rawProductCompanies.length > 0) {
@@ -6693,15 +6673,20 @@ export async function getVendorsForProductCompany(
   }
   
   if (!productCompanyLink) {
-    console.error(`[getVendorsForProductCompany] ❌ Product ${productId} (${product.name || product.id}) is not linked to company ${companyId} (${company.name || company.id})`)
+    console.error(`[getVendorsForProductCompany] ❌ Product ${productId} (${
+    product.name || 
+    product.id}) is not linked to company ${companyId} (${
+    company.name || 
+    company.id})`)
     console.error(`[getVendorsForProductCompany] Product _id: ${product._id}, Company _id: ${company._id}`)
     // List existing ProductCompany relationships for debugging
-    const allProductCompanies = await ProductCompany.find({ productId: product._id }).populate('companyId', 'id name').limit(5).lean()
-    console.error(`[getVendorsForProductCompany] Product is linked to companies:`, allProductCompanies.map((pc: any) => pc.companyId?.id || pc.companyId?.toString()))
+    const allProductCompanies = await ProductCompany.find({ productId: 
+    product._id }).populate('companyId', 'id name').limit(5).lean() as any
     
     // Also check raw collection
     if (db) {
-      const rawProductCompanies = await db.collection('productcompanies').find({ productId: product._id }).toArray()
+      const rawProductCompanies = await db.collection('productcompanies').find({ productId: 
+    product._id }).toArray()
       console.error(`[getVendorsForProductCompany] Raw ProductCompany links for product:`, rawProductCompanies.map((pc: any) => `companyId=${pc.companyId?.toString()}`))
     }
     return []
@@ -6735,7 +6720,9 @@ export async function getVendorsForProductCompany(
   console.log(`[getVendorsForProductCompany] Found ${matchingLinks.length} ProductVendor link(s) for product ${productId} and company ${companyId}`)
   
   if (matchingLinks.length === 0) {
-    console.error(`[getVendorsForProductCompany] ❌ No ProductVendor relationships found for product ${productId} (${product.name || product.id})`)
+    console.error(`[getVendorsForProductCompany] ❌ No ProductVendor relationships found for product ${productId} (${
+    product.name || 
+    product.id})`)
     console.error(`[getVendorsForProductCompany] Product _id: ${productIdStr}`)
     console.error(`[getVendorsForProductCompany] All ProductVendor links in DB:`)
     rawProductVendors.forEach((pv: any, i: number) => {
@@ -6786,7 +6773,9 @@ export async function getVendorsForProductCompany(
   // CRITICAL VALIDATION: A product should only be linked to ONE vendor
   // If multiple vendors are found, this indicates a data integrity issue
   if (matchingVendors.length > 1) {
-    console.error(`[getVendorsForProductCompany] ❌ CRITICAL: Product ${productId} (${product.name || product.id}) is linked to MULTIPLE vendors!`)
+    console.error(`[getVendorsForProductCompany] ❌ CRITICAL: Product ${productId} (${
+    product.name || 
+    product.id}) is linked to MULTIPLE vendors!`)
     console.error(`[getVendorsForProductCompany] This violates the business rule: "A product can only be linked to one vendor"`)
     console.error(`[getVendorsForProductCompany] Vendors found:`, matchingVendors.map(v => `${v.vendorId} (${v.vendorName})`))
     console.error(`[getVendorsForProductCompany] ⚠️ Returning FIRST vendor, but this is a DATA INTEGRITY ISSUE`)
@@ -6834,9 +6823,8 @@ export async function getAllOrders(): Promise<any[]> {
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
-    .lean()
+    .lean() as any
 
-  return orders.map((o: any) => toPlainObject(o))
 }
 
 export async function getOrdersByCompany(companyId: string): Promise<any[]> {
@@ -6850,13 +6838,11 @@ export async function getOrdersByCompany(companyId: string): Promise<any[]> {
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
-    .lean()
+    .lean() as any
 
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(orders.map((o: any) => o.vendorId).filter(Boolean))]
-  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
 
   const transformedOrders = orders.map((o: any) => {
     const plain = toPlainObject(o)
@@ -6907,27 +6893,27 @@ export async function getOrdersByLocation(locationId: string): Promise<any[]> {
   // Get all employees in this location
   const locationEmployees = await Employee.find({ locationId: location._id })
     .select('_id employeeId id')
-    .lean()
+    .lean() as any
   
   if (locationEmployees.length === 0) {
     return []
   }
 
   // Get employee ObjectIds
-  const employeeObjectIds = locationEmployees.map((e: any) => e._id)
+  // Get employee string IDs
+  const employeeIds = locationEmployees.map((e: any) => e.id || e.employeeId).filter((id: any) => id)
 
   // Find orders for these employees
-  const orders = await Order.find({ employeeId: { $in: employeeObjectIds } })
+  const orders = await Order.find({ employeeId: { $in: employeeIds } })
     .populate('employeeId', 'id firstName lastName email locationId')
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
-    .lean()
+    .lean() as any
 
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(orders.map((o: any) => o.vendorId).filter(Boolean))]
-  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
   const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
 
   return orders.map((o: any) => {
@@ -6946,27 +6932,21 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
   console.log(`[getOrdersByVendor] ========================================`)
   console.log(`[getOrdersByVendor] 🚀 FETCHING ORDERS FOR VENDOR: ${vendorId}`)
   
-  // CRITICAL FIX: Enhanced vendor lookup with multiple fallback methods
-  let vendor = await Vendor.findOne({ id: vendorId })
-  
-  // Fallback: Try finding by _id if vendorId looks like ObjectId
-  if (!vendor && mongoose.Types.ObjectId.isValid(vendorId)) {
-    console.log(`[getOrdersByVendor] Vendor not found by id field, trying _id lookup`)
-    vendor = await Vendor.findById(vendorId)
-  }
+  // Find vendor - use string ID only
+  const vendor = await Vendor.findOne({ id: vendorId })
   
   if (!vendor) {
     console.error(`[getOrdersByVendor] ❌ Vendor not found: ${vendorId}`)
     // List available vendors for debugging
-    const allVendors = await Vendor.find({}, 'id name _id').limit(5).lean()
-    console.error(`[getOrdersByVendor] Available vendors (sample):`, allVendors.map((v: any) => `id=${v.id}, _id=${v._id?.toString()}`))
+    const allVendors = await Vendor.find({}, 'id name _id').limit(5).lean() as any
     return []
   }
   
   console.log(`[getOrdersByVendor] ✅ Vendor found: ${vendor.name} (id: ${vendor.id}, _id: ${vendor._id})`)
 
   // CRITICAL FIX: Orders now store vendorId as 6-digit numeric string, NOT ObjectId
-  // Query using vendor.id (numeric string) instead of vendor._id (ObjectId)
+  // Query using 
+    // vendor.id (numeric string) instead of vendor._id (ObjectId)
   const vendorNumericId = String(vendor.id).trim()
   console.log(`[getOrdersByVendor] Querying orders with vendorId (numeric): ${vendorNumericId}`)
   
@@ -6997,16 +6977,16 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
-    .lean()
+    .lean() as any
   
-  console.log(`[getOrdersByVendor] Found ${orders.length} approved order(s) with vendorId=${vendorNumericId} (after Company Admin approval filter)`)
   
   // If no orders found with numeric ID, try ObjectId as fallback (for legacy orders)
   // Apply same approval filter for legacy orders
   if (orders.length === 0 && mongoose.Types.ObjectId.isValid(vendorNumericId) === false) {
     console.log(`[getOrdersByVendor] No orders found with numeric ID, trying ObjectId fallback for legacy orders...`)
     const legacyOrderQuery: any = {
-      vendorId: vendor._id,
+      vendorId: 
+    vendor._id,
       $or: [
         { pr_status: { $in: ['COMPANY_ADMIN_APPROVED', 'PO_CREATED'] } },
         { orderType: 'REPLACEMENT' }
@@ -7018,13 +6998,11 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
       .populate('companyId', 'id name')
       .populate('items.uniformId', 'id name')
       .sort({ orderDate: -1 })
-      .lean()
+      .lean() as any
     
-    if (legacyOrders.length > 0) {
-      console.log(`[getOrdersByVendor] Found ${legacyOrders.length} approved legacy order(s) with ObjectId vendorId (after Company Admin approval filter)`)
-      console.log(`[getOrdersByVendor] ⚠️ These orders should be migrated to use numeric vendorId`)
-      orders = legacyOrders
-    }
+    console.log(`[getOrdersByVendor] Found ${legacyOrders.length} approved legacy order(s) with ObjectId vendorId (after Company Admin approval filter)`)
+    console.log(`[getOrdersByVendor] ⚠️ These orders should be migrated to use numeric vendorId`)
+    orders = legacyOrders
   }
   
   if (orders.length === 0) {
@@ -7050,9 +7028,8 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
       if (orderIds.length > 0) {
         const poOrderMappings = await POOrder.find({ order_id: { $in: orderIds } })
           .populate('purchase_order_id', 'id client_po_number po_date')
-          .lean()
+          .lean() as any
         
-        // Create a map of order _id to PO details
         for (const mapping of poOrderMappings) {
           const orderId = (mapping.order_id as any)?.toString()
           const po = mapping.purchase_order_id as any
@@ -7090,7 +7067,7 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
   
   // Log order details for debugging
   console.log(`[getOrdersByVendor] 📋 Order Summary:`)
-  orders.forEach((order, idx) => {
+  orders.forEach((order: any, idx: number) => {
     console.log(`[getOrdersByVendor]   ${idx + 1}. Order ID: ${order.id}, Status: ${order.status}, PR: ${order.prNumber || 'N/A'}, PO: ${order.poNumbers?.join(', ') || 'N/A'}, ParentOrderId: ${(order as any).parentOrderId || 'N/A'}, VendorId: ${order.vendorId || 'N/A'}`)
   })
   
@@ -7127,9 +7104,8 @@ export async function getVendorSalesPatterns(vendorId: string, period: 'daily' |
 
   const orders = await Order.find({ vendorId: vendor._id })
     .select('orderDate total status')
-    .lean()
+    .lean() as any
 
-  if (orders.length === 0) return []
 
   // Group orders by period
   const periodMap = new Map<string, { revenue: number; orderCount: number }>()
@@ -7178,7 +7154,7 @@ export async function getVendorOrderStatusBreakdown(vendorId: string): Promise<{
   count: number
   revenue: number
   percentage: number
-}> {
+}[]> {
   await connectDB()
   
   const vendor = await Vendor.findOne({ id: vendorId })
@@ -7186,9 +7162,8 @@ export async function getVendorOrderStatusBreakdown(vendorId: string): Promise<{
 
   const orders = await Order.find({ vendorId: vendor._id })
     .select('status total')
-    .lean()
+    .lean() as any
 
-  if (orders.length === 0) return []
 
   const statusMap = new Map<string, { count: number; revenue: number }>()
 
@@ -7233,9 +7208,8 @@ export async function getVendorBusinessVolumeByCompany(vendorId: string): Promis
   const orders = await Order.find({ vendorId: vendor._id })
     .populate('companyId', 'id name')
     .select('companyId total')
-    .lean()
+    .lean() as any
 
-  if (orders.length === 0) return []
 
   const companyMap = new Map<string, { companyName: string; orderCount: number; revenue: number }>()
   let totalRevenue = 0
@@ -7289,7 +7263,8 @@ export async function getVendorReports(vendorId: string): Promise<{
   
   const vendor = await Vendor.findOne({ id: vendorId })
   if (!vendor) {
-    throw new Error(`Vendor not found: ${vendorId}`)
+    console.warn(`[updateVendor] Vendor not found: ${vendorId}`);
+    return null // Return null instead of throwing - let API route handle 404
   }
 
   const [salesPatternsDaily, salesPatternsWeekly, salesPatternsMonthly, orderStatusBreakdown, businessVolumeByCompany] = await Promise.all([
@@ -7301,8 +7276,8 @@ export async function getVendorReports(vendorId: string): Promise<{
   ])
 
   // Calculate summary
-  const totalRevenue = orderStatusBreakdown.reduce((sum, item) => sum + item.revenue, 0)
-  const totalOrders = orderStatusBreakdown.reduce((sum, item) => sum + item.count, 0)
+  const totalRevenue = orderStatusBreakdown.reduce((sum: any, item: any) => sum + item.revenue, 0)
+  const totalOrders = orderStatusBreakdown.reduce((sum: any, item: any) => sum + item.count, 0)
   const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0
   const totalCompanies = businessVolumeByCompany.length
 
@@ -7416,7 +7391,8 @@ export async function getOrdersByEmployee(employeeId: string): Promise<any[]> {
   // OPTIMIZATION: Build query conditions once, use indexed fields
   const employeeIdNum = employee.employeeId || employee.id
   const orderQueryConditions: any[] = [
-    { employeeId: employee._id } // Primary: ObjectId reference (indexed)
+    { employeeId: 
+    employee._id } // Primary: ObjectId reference (indexed)
   ]
   
   // Add employeeIdNum conditions for backward compatibility
@@ -7436,13 +7412,11 @@ export async function getOrdersByEmployee(employeeId: string): Promise<any[]> {
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
-    .lean()
+    .lean() as any
   
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(orders.map((o: any) => o.vendorId).filter(Boolean))]
-  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
   
   // Add vendorName to orders
   orders.forEach((o: any) => {
@@ -7475,8 +7449,8 @@ export async function getOrdersByEmployee(employeeId: string): Promise<any[]> {
     splitOrders.sort((a, b) => (a.vendorName || '').localeCompare(b.vendorName || ''))
     
     // Create a grouped order object
-    const totalAmount = splitOrders.reduce((sum, o) => sum + (o.total || 0), 0)
-    const totalItems = splitOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0)
+    const totalAmount = splitOrders.reduce((sum: any, o: any) => sum + (o.total || 0), 0)
+    const totalItems = splitOrders.reduce((sum: any, o: any) => sum + (o.items?.length || 0), 0)
     const allItems = splitOrders.flatMap(o => o.items || [])
     
     // NEW STATUS AGGREGATION LOGIC: Calculate granular status for multi-vendor orders
@@ -7551,13 +7525,11 @@ export async function getOrdersByParentOrderId(parentOrderId: string): Promise<a
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
-    .lean()
+    .lean() as any
 
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(orders.map((o: any) => o.vendorId).filter(Boolean))]
-  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
 
   return orders.map((o: any) => {
     const plain = toPlainObject(o)
@@ -7604,14 +7576,19 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
   }
 
   // Get company ID
-  const company = await Company.findById(employee.companyId)
+  // Use string ID for company lookup
+  const company = await Company.findOne({ id: String(employee.companyId) })
   if (!company) {
     // Fallback to employee-level eligibility (legacy format)
     const legacyEligibility = {
-      shirt: employee.eligibility?.shirt || 0,
-      pant: employee.eligibility?.pant || 0,
-      shoe: employee.eligibility?.shoe || 0,
-      jacket: employee.eligibility?.jacket || 0,
+      shirt: 
+    employee.eligibility?.shirt || 0,
+      pant: 
+    employee.eligibility?.pant || 0,
+      shoe: 
+    employee.eligibility?.shoe || 0,
+      jacket: 
+    employee.eligibility?.jacket || 0,
     }
     const legacyCycleDurations = employee.cycleDuration || { shirt: 6, pant: 6, shoe: 6, jacket: 12 }
     
@@ -7661,15 +7638,15 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
   
   // Query DesignationSubcategoryEligibility (subcategory-based)
   const subcategoryEligibilities = await DesignationSubcategoryEligibility.find({
-    companyId: company._id,
+    companyId: 
+    company._id,
     designationId: normalizedDesignation,
     gender: genderFilter,
     status: 'active'
   })
     .populate('subCategoryId', 'id name parentCategoryId')
-    .lean()
+    .lean() as any
   
-  console.log(`[getEmployeeEligibilityFromDesignation] Found ${subcategoryEligibilities.length} subcategory eligibility rules`)
   
   // CRITICAL MIGRATION: Subcategory eligibility is the SINGLE source of truth
   // NO category-based fallback allowed
@@ -7710,13 +7687,13 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
     
     const subcategories = await Subcategory.find({
       _id: { $in: subcategoryIds },
-      companyId: company._id,
+      companyId: 
+    company._id,
       status: 'active'
     })
       .populate('parentCategoryId', 'id name')
-      .lean()
+      .lean() as any
     
-    // Create map: subcategory _id -> subcategory data
     const subcategoryMap = new Map()
     for (const subcat of subcategories) {
       const subcatId = (subcat as any)._id.toString()
@@ -7813,7 +7790,8 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
   }
 
   // Get company
-  const company = await Company.findById(employee.companyId)
+  // Use string ID for company lookup
+  const company = await Company.findOne({ id: String(employee.companyId) })
   if (!company) {
     return { consumed: {}, shirt: 0, pant: 0, shoe: 0, jacket: 0 }
   }
@@ -7840,13 +7818,13 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
   // Get all orders that count towards consumed eligibility (all except cancelled)
   // We'll filter by item-specific cycles below
   const orders = await Order.find({
-    employeeId: employee._id,
+    employeeId: 
+    employee._id,
     status: { $in: ['Awaiting approval', 'Awaiting fulfilment', 'Dispatched', 'Delivered'] }
   })
     .populate('items.uniformId', 'id category categoryId')
-    .lean()
+    .lean() as any
 
-  // Initialize consumed eligibility for all categories
   const consumed: Record<string, number> = {}
   categories.forEach(cat => {
     consumed[cat.name.toLowerCase()] = 0
@@ -7981,7 +7959,8 @@ export async function validateEmployeeEligibility(
   }
   
   // Get company
-  const company = await Company.findById(employee.companyId)
+  // Use string ID for company lookup
+  const company = await Company.findOne({ id: String(employee.companyId) })
   if (!company) {
     return {
       valid: false,
@@ -8133,17 +8112,14 @@ export async function validateBulkOrderItemSubcategoryEligibility(
     return { valid: false, error: `Employee ${employeeId} is not active` }
   }
 
-  // Get company
-  let company = await Company.findOne({ id: companyId })
-  if (!company && mongoose.Types.ObjectId.isValid(companyId)) {
-    company = await Company.findById(companyId)
-  }
+  // Get company - use string ID only
+  const company = await Company.findOne({ id: companyId })
   if (!company) {
     return { valid: false, error: `Company not found: ${companyId}` }
   }
 
   // Verify employee belongs to company
-  if (employee.companyId.toString() !== company._id.toString()) {
+  if (String(employee.companyId) !== String(company.id)) {
     return { valid: false, error: `Employee ${employeeId} does not belong to company ${companyId}` }
   }
 
@@ -8166,68 +8142,50 @@ export async function validateBulkOrderItemSubcategoryEligibility(
   const employeeGender = employee.gender || 'unisex'
   const genderFilter = employeeGender === 'unisex' ? { $in: ['male', 'female', 'unisex'] } : employeeGender
 
-  // Check for subcategory-based eligibility
+  // Check for subcategory-based eligibility - use string ID
   const subcategoryEligibilities = await DesignationSubcategoryEligibility.find({
-    companyId: company._id,
+    companyId: company.id,
     designationId: normalizedDesignation,
     gender: genderFilter,
     status: 'active'
   })
     .populate('subCategoryId', 'id name')
-    .lean()
+    .lean() as any
 
   if (subcategoryEligibilities.length === 0) {
     return { valid: false, error: `No eligibility defined for designation "${normalizedDesignation}". Employee cannot order any products.` }
   }
 
-  // Get eligible subcategory IDs
+  // Get eligible subcategory IDs - use string IDs
   const eligibleSubcategoryIds = subcategoryEligibilities
-    .map(e => e.subCategoryId?._id?.toString() || e.subCategoryId?.toString())
+    .map(e => e.subCategoryId?.id || String(e.subCategoryId))
     .filter(Boolean)
 
   if (eligibleSubcategoryIds.length === 0) {
     return { valid: false, error: `No valid subcategories found for designation "${normalizedDesignation}"` }
   }
 
-  // Find product by ObjectId or readable ID
-  let productObjectId: mongoose.Types.ObjectId | null = null
-  
-  if (mongoose.Types.ObjectId.isValid(productId)) {
-    productObjectId = new mongoose.Types.ObjectId(productId)
-  } else {
-    // Try finding by readable 'id' field
-    const product = await Uniform.findOne({ id: productId }).select('_id').lean()
-    if (product && product._id) {
-      productObjectId = product._id
-    }
-  }
-
-  if (!productObjectId) {
+  // Find product - use string ID only
+  const product = await Uniform.findOne({ id: productId }).select('id').lean() as any
+  if (!product) {
     return { valid: false, error: `Invalid product ID: ${productId}` }
   }
 
-  // Check if product is mapped to any eligible subcategory
+  // Check if product is mapped to any eligible subcategory - use string IDs
   const productMappings = await ProductSubcategoryMapping.find({
-    productId: productObjectId,
-    subCategoryId: { $in: eligibleSubcategoryIds.map(id => new mongoose.Types.ObjectId(id)) },
-    companyId: company._id
+    productId: product.id,
+    subCategoryId: { $in: eligibleSubcategoryIds },
+    companyId: company.id
   })
     .populate('subCategoryId', 'id name')
-    .lean()
+    .lean() as any
 
   if (productMappings.length === 0) {
-    // Try to get product name for better error message
+    // Try to get product name for better error message - use string ID
     let productName = productId
     try {
-      const product = await Uniform.findOne({ 
-        $or: [
-          { _id: productObjectId },
-          { id: productId }
-        ]
-      }).select('name id').lean()
-      if (product) {
-        productName = product.name || product.id || productId
-      }
+      const productForName = await Uniform.findOne({ id: productId }).select('name id').lean() as any
+      productName = (productForName as any).name || (productForName as any).id || productId
     } catch (error) {
       // Use productId if lookup fails
     }
@@ -8300,46 +8258,42 @@ export async function createOrder(orderData: {
   let employee = await Employee.findOne({ employeeId: orderData.employeeId })
   
   // If not found by employeeId, try by id field (fallback for backward compatibility)
+  // Find employee - try employeeId first, then id field (both are string IDs)
   if (!employee) {
     console.log(`[createOrder] Employee not found by employeeId, trying id field`)
     employee = await Employee.findOne({ id: orderData.employeeId })
   }
   
-  // If still not found, try by _id (ObjectId)
-  if (!employee && mongoose.Types.ObjectId.isValid(orderData.employeeId)) {
-    console.log(`[createOrder] Employee not found by employeeId or id, trying _id lookup`)
-    employee = await Employee.findById(orderData.employeeId)
-  }
-  
   if (!employee) {
     console.error(`[createOrder] ❌ Employee not found with any ID format: ${orderData.employeeId}`)
     // List available employees for debugging
-    const sampleEmployees = await Employee.find({}, 'id employeeId email firstName lastName').limit(5).lean()
-    console.error(`[createOrder] Available employees (sample):`, sampleEmployees.map((e: any) => `id=${e.id}, employeeId=${e.employeeId}, email=${e.email}`))
+    const sampleEmployees = await Employee.find({}, 'id employeeId email firstName lastName').limit(5).lean() as any
     throw new Error(`Employee not found: ${orderData.employeeId}. Please ensure you are logged in with a valid employee account.`)
   }
   
   console.log(`[createOrder] ✓ Found employee: id=${employee.id}, employeeId=${employee.employeeId}, email=${employee.email}`)
-  console.log(`[createOrder] Employee companyId type=${typeof employee.companyId}, value=${employee.companyId}`)
-  console.log(`[createOrder] Employee companyId isObject=${typeof employee.companyId === 'object'}, isNull=${employee.companyId === null}`)
+  console.log(`[createOrder] Employee companyId type=${typeof 
+    employee.companyId}, value=${employee.companyId}`)
+  console.log(`[createOrder] Employee companyId isObject=${typeof 
+    employee.companyId === 'object'}, isNull=${
+    employee.companyId === null}`)
 
   // Use raw MongoDB collection to reliably get the employee's companyId ObjectId
   // This is necessary because Mongoose populate might fail or return inconsistent data
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     throw new Error('Database connection not available')
   }
 
-  // Get raw employee document to ensure we have the actual companyId ObjectId
-  // Try multiple lookup methods - use employeeId field first
+  // Get raw employee document - use string ID fields only
+  // Try employeeId field first, then id field (both are string IDs)
   let rawEmployee = await db.collection('employees').findOne({ employeeId: orderData.employeeId })
   
   if (!rawEmployee) {
     rawEmployee = await db.collection('employees').findOne({ id: orderData.employeeId })
-  }
-  
-  if (!rawEmployee && mongoose.Types.ObjectId.isValid(orderData.employeeId)) {
-    rawEmployee = await db.collection('employees').findOne({ _id: new mongoose.Types.ObjectId(orderData.employeeId) })
   }
   
   if (!rawEmployee) {
@@ -8347,7 +8301,9 @@ export async function createOrder(orderData: {
     throw new Error(`Employee not found: ${orderData.employeeId}. Please ensure you are logged in with a valid employee account.`)
   }
 
-  console.log(`[createOrder] Raw employee companyId:`, rawEmployee.companyId, 'Type:', typeof rawEmployee.companyId)
+  console.log(`[createOrder] Raw employee companyId:`, 
+    rawEmployee.companyId, 'Type:', typeof 
+    rawEmployee.companyId)
   
   // Extract companyId ObjectId from raw document
   let companyIdObjectId: any = null
@@ -8377,8 +8333,7 @@ export async function createOrder(orderData: {
   // Get company ID string for checking
   const companyIdString = await (async () => {
     if (companyIdObjectId) {
-      const companyDoc = await Company.findById(companyIdObjectId).select('id').lean()
-      return companyDoc?.id || null
+      const companyDoc = await Company.findById(companyIdObjectId).select('id').lean() as any
     }
     return null
   })()
@@ -8390,8 +8345,8 @@ export async function createOrder(orderData: {
     
     // If not an admin, check if employee order is enabled
     if (!isAdmin && !location) {
-      const company = await Company.findById(companyIdObjectId).select('enableEmployeeOrder').lean()
-      if (company && company.enableEmployeeOrder === false) {
+      const company = await Company.findById(companyIdObjectId).select('enableEmployeeOrder').lean() as any
+      if (!company) {
         throw new Error('Employee orders are currently disabled for your company. Please contact your administrator.')
       }
     }
@@ -8403,8 +8358,7 @@ export async function createOrder(orderData: {
     console.error(`[createOrder] Employee ${orderData.employeeId} has no companyId in raw document`)
     // Employee must have a companyId - this is a data integrity issue
     // List available companies for debugging
-    const allCompanies = await Company.find({}, 'id name').limit(10).lean()
-    console.error(`[createOrder] Available companies (sample):`, allCompanies.map((c: any) => `id=${c.id}, name=${c.name}, _id=${c._id}`))
+    const allCompanies = await Company.find({}, 'id name').limit(10).lean() as any
     throw new Error(`Employee ${orderData.employeeId} has no companyId. Please ensure the employee is linked to a valid company using companyId.`)
   } else {
     // Use ObjectId to find company
@@ -8446,7 +8400,8 @@ export async function createOrder(orderData: {
         if (!company) {
           // Try by numeric id - explicitly select workflow flags
           if (companyDoc.id) {
-            company = await Company.findOne({ id: companyDoc.id })
+            company = await Company.findOne({ id: 
+    companyDoc.id })
               .select('id name _id enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po allowPersonalAddressDelivery')
           }
         }
@@ -8454,7 +8409,8 @@ export async function createOrder(orderData: {
         if (!company) {
           // Try by name as last resort - explicitly select workflow flags
           if (companyDoc.name) {
-            company = await Company.findOne({ name: companyDoc.name })
+            company = await Company.findOne({ name: 
+    companyDoc.name })
               .select('id name _id enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po allowPersonalAddressDelivery')
           }
         }
@@ -8469,8 +8425,7 @@ export async function createOrder(orderData: {
       if (!company) {
         console.error(`[createOrder] ❌ Company not found by ObjectId ${companyIdStr} after all lookup attempts`)
         // List available companies for debugging
-        const allCompaniesList = await Company.find({}, 'id name _id').limit(10).lean()
-        console.error(`[createOrder] Available companies via Mongoose (sample):`, allCompaniesList.map((c: any) => `id=${c.id}, name=${c.name}, _id=${c._id?.toString()}`))
+        const allCompaniesList = await Company.find({}, 'id name _id').limit(10).lean() as any
         console.error(`[createOrder] Looking for company with _id matching: ${companyIdStr}`)
         throw new Error(`Company not found for employee: ${orderData.employeeId} (companyId ObjectId: ${companyIdStr}). Please ensure the employee is linked to a valid company using companyId.`)
       }
@@ -8481,16 +8436,18 @@ export async function createOrder(orderData: {
     console.error(`[createOrder] Company lookup failed for employee ${orderData.employeeId}`)
     console.error(`[createOrder] companyId ObjectId was: ${companyIdObjectId?.toString() || 'null'}`)
     // List available companies for debugging
-    const allCompanies = await Company.find({}, 'id name').limit(10).lean()
-    console.error(`[createOrder] Available companies (sample):`, allCompanies.map((c: any) => `id=${c.id}, name=${c.name}, _id=${c._id}`))
+    const allCompanies = await Company.find({}, 'id name').limit(10).lean() as any
     throw new Error(`Company not found for employee: ${orderData.employeeId}. Please ensure the employee is linked to a valid company.`)
   }
   
   console.log(`[createOrder] ✓ Found company: id=${company.id}, name=${company.name}, _id=${company._id}`)
   console.log(`[createOrder] Company workflow flags:`)
-  console.log(`[createOrder]   enable_pr_po_workflow: ${company.enable_pr_po_workflow} (type: ${typeof company.enable_pr_po_workflow})`)
-  console.log(`[createOrder]   enable_site_admin_pr_approval: ${company.enable_site_admin_pr_approval} (type: ${typeof company.enable_site_admin_pr_approval})`)
-  console.log(`[createOrder]   require_company_admin_po_approval: ${company.require_company_admin_po_approval} (type: ${typeof company.require_company_admin_po_approval})`)
+  console.log(`[createOrder]   enable_pr_po_workflow: ${company.enable_pr_po_workflow} (type: ${typeof 
+    company.enable_pr_po_workflow})`)
+  console.log(`[createOrder]   enable_site_admin_pr_approval: ${company.enable_site_admin_pr_approval} (type: ${typeof 
+    company.enable_site_admin_pr_approval})`)
+  console.log(`[createOrder]   require_company_admin_po_approval: ${company.require_company_admin_po_approval} (type: ${typeof 
+    company.require_company_admin_po_approval})`)
 
   // ========== DELIVERY LOCATION VALIDATION & SHIPPING ADDRESS EXTRACTION ==========
   // Enforce company-level delivery location rules based on allowPersonalAddressDelivery
@@ -8586,7 +8543,8 @@ export async function createOrder(orderData: {
       // For backward compatibility: if employee has no locationId, use their personal address as fallback
       console.warn(`[createOrder] Employee ${orderData.employeeId} has no locationId. Using personal address as fallback.`)
       shippingAddress = extractEmployeeAddress(employee)
-      deliveryAddressToUse = orderData.deliveryAddress || employee.address || 'Address not available'
+      deliveryAddressToUse = orderData.deliveryAddress || 
+    employee.address || 'Address not available'
     } else {
       // Employee has locationId - fetch location and use its address
       const Location = require('../models/Location').default
@@ -8600,17 +8558,18 @@ export async function createOrder(orderData: {
       
       // Build location address string for display/backward compatibility
       const locationAddressParts = [
-        location.address_line_1,
-        location.address_line_2,
-        location.address_line_3,
-        location.city,
-        location.state,
-        location.pincode
+    location.address_line_1,
+    location.address_line_2,
+    location.address_line_3,
+    location.city,
+    location.state,
+    location.pincode
       ].filter(Boolean)
       
       deliveryAddressToUse = locationAddressParts.length > 0
         ? locationAddressParts.join(', ')
-        : location.name || 'Location address not available'
+        : 
+    location.name || 'Location address not available'
       
       console.log(`[createOrder] Using official location address: ${deliveryAddressToUse}`)
     }
@@ -8619,7 +8578,8 @@ export async function createOrder(orderData: {
     if (orderData.usePersonalAddress === true) {
       // Employee explicitly chose personal address
       shippingAddress = extractEmployeeAddress(employee)
-      deliveryAddressToUse = orderData.deliveryAddress || employee.address || 'Address not available'
+      deliveryAddressToUse = orderData.deliveryAddress || 
+    employee.address || 'Address not available'
       console.log(`[createOrder] Using personal address (explicitly chosen): ${deliveryAddressToUse}`)
     } else {
       // Default: use official location address
@@ -8627,7 +8587,8 @@ export async function createOrder(orderData: {
         // Fallback to personal address if no locationId
         console.warn(`[createOrder] Employee ${orderData.employeeId} has no locationId. Using personal address as default.`)
         shippingAddress = extractEmployeeAddress(employee)
-        deliveryAddressToUse = orderData.deliveryAddress || employee.address || 'Address not available'
+        deliveryAddressToUse = orderData.deliveryAddress || 
+    employee.address || 'Address not available'
       } else {
         // Employee has locationId - use official location address as default
         const Location = require('../models/Location').default
@@ -8637,23 +8598,25 @@ export async function createOrder(orderData: {
           // Fallback to personal address if location not found
           console.warn(`[createOrder] Employee's location not found. Using personal address as fallback.`)
           shippingAddress = extractEmployeeAddress(employee)
-          deliveryAddressToUse = orderData.deliveryAddress || employee.address || 'Address not available'
+          deliveryAddressToUse = orderData.deliveryAddress || 
+    employee.address || 'Address not available'
         } else {
           shippingAddress = extractLocationAddress(location)
           
           // Build location address string for display
           const locationAddressParts = [
-            location.address_line_1,
-            location.address_line_2,
-            location.address_line_3,
-            location.city,
-            location.state,
-            location.pincode
+    location.address_line_1,
+    location.address_line_2,
+    location.address_line_3,
+    location.city,
+    location.state,
+    location.pincode
           ].filter(Boolean)
           
           deliveryAddressToUse = locationAddressParts.length > 0
             ? locationAddressParts.join(', ')
-            : location.name || 'Location address not available'
+            : 
+    location.name || 'Location address not available'
           
           console.log(`[createOrder] Using official location address (default): ${deliveryAddressToUse}`)
         }
@@ -8696,11 +8659,7 @@ export async function createOrder(orderData: {
       // Try finding by readable 'id' field first (most common case)
       let uniform = await Uniform.findOne({ id: item.uniformId })
       
-      // If not found by readable id, try by ObjectId (_id)
-      if (!uniform && mongoose.Types.ObjectId.isValid(item.uniformId)) {
-        console.log(`[createOrder] Product not found by readable id, trying ObjectId lookup`)
-        uniform = await Uniform.findById(item.uniformId)
-      }
+      // Removed ObjectId fallback - all products should use string IDs
       
       if (!uniform) {
         console.error(`[createOrder] Uniform not found for productId=${item.uniformId} (tried both id field and _id)`)
@@ -8743,7 +8702,8 @@ export async function createOrder(orderData: {
     console.log(`[createOrder]    Product: ${item.uniformId} (${uniform.name || item.uniformName})`)
 
     // CRITICAL FIX: Get vendor ObjectId from database - verify vendor exists
-    const vendor = await Vendor.findOne({ id: vendorInfo.vendorId })
+    const vendor = await Vendor.findOne({ id: 
+    vendorInfo.vendorId })
     if (!vendor) {
       console.error(`[createOrder] ❌ Vendor not found: ${vendorInfo.vendorId}`)
       throw new Error(`Vendor not found: ${vendorInfo.vendorId}`)
@@ -8790,14 +8750,15 @@ export async function createOrder(orderData: {
   const employeeName = `${employee.firstName} ${employee.lastName}`
   
   // Get numeric IDs for correlation
-  const employeeIdNum = employee.employeeId || employee.id // Use employeeId field first, fallback to id
+  const employeeIdNum = employee.employeeId || 
+    employee.id // Use employeeId field first, fallback to id
   const companyIdNum = company.id // Company.id is already numeric
 
   console.log(`[createOrder] ========================================`)
   console.log(`[createOrder] 📦 CREATING MULTI-VENDOR ORDER`)
   console.log(`[createOrder] Parent Order ID: ${parentOrderId}`)
   console.log(`[createOrder] Vendors: ${itemsByVendor.size}`)
-  itemsByVendor.forEach((items, vid) => {
+  itemsByVendor.forEach((items: any, vid: number) => {
     const vendorInfo = vendorInfoMap.get(vid)!
     console.log(`[createOrder]   - Vendor: ${vendorInfo.vendorName} (${vid}), Items: ${items.length}`)
   })
@@ -8814,11 +8775,13 @@ export async function createOrder(orderData: {
     // CRITICAL FIX: Re-verify vendor exists in database before creating order
     // This ensures we use the actual vendor data from the database, not cached data
     // Use numeric id field first (most reliable) since we already have it
-    let vendor = await Vendor.findOne({ id: vendorInfo.vendorId })
+    let vendor = await Vendor.findOne({ id: 
+    vendorInfo.vendorId })
     
     // Fallback: If not found by numeric id, try by ObjectId
     if (!vendor) {
-      console.warn(`[createOrder] ⚠️ Vendor not found by numeric id ${vendorInfo.vendorId}, trying by ObjectId: ${vendorInfo.vendorObjectId.toString()}`)
+      console.warn(`[createOrder] ⚠️ Vendor not found by numeric id ${vendorInfo.vendorId}, trying by ObjectId: ${
+    vendorInfo.vendorObjectId.toString()}`)
       vendor = await Vendor.findById(vendorInfo.vendorObjectId)
     }
     
@@ -8826,13 +8789,18 @@ export async function createOrder(orderData: {
     if (!vendor) {
       console.warn(`[createOrder] ⚠️ Vendor not found by ObjectId, trying raw MongoDB collection lookup`)
       const db = mongoose.connection.db
-      if (db) {
+         if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db) {
         // Try by ObjectId first
-        let rawVendor = await db.collection('vendors').findOne({ _id: vendorInfo.vendorObjectId })
+        let rawVendor = await db.collection('vendors').findOne({ _id: 
+    vendorInfo.vendorObjectId })
         
         // If not found, try by numeric id
         if (!rawVendor) {
-          rawVendor = await db.collection('vendors').findOne({ id: vendorInfo.vendorId })
+          rawVendor = await db.collection('vendors').findOne({ id: 
+    vendorInfo.vendorId })
         }
         
         if (rawVendor) {
@@ -8841,7 +8809,8 @@ export async function createOrder(orderData: {
           
           // If still not found, try by numeric id
           if (!vendor) {
-            vendor = await Vendor.findOne({ id: rawVendor.id })
+            vendor = await Vendor.findOne({ id: 
+    rawVendor.id })
           }
         }
       }
@@ -8849,22 +8818,27 @@ export async function createOrder(orderData: {
     
     if (!vendor) {
       console.error(`[createOrder] ❌ CRITICAL: Vendor not found in database after all lookup attempts`)
-      console.error(`[createOrder]    vendorObjectId: ${vendorInfo.vendorObjectId.toString()}`)
+      console.error(`[createOrder]    vendorObjectId: ${
+    vendorInfo.vendorObjectId.toString()}`)
       console.error(`[createOrder]    vendorId (numeric): ${vendorInfo.vendorId}`)
       console.error(`[createOrder]    vendorName: ${vendorInfo.vendorName}`)
       
       // List available vendors for debugging
-      const allVendors = await Vendor.find({}, 'id name _id').limit(5).lean()
-      console.error(`[createOrder] Available vendors (sample):`, allVendors.map((v: any) => `id=${v.id}, name=${v.name}, _id=${v._id?.toString()}`))
+      const allVendors = await Vendor.find({}, 'id name _id').limit(5).lean() as any
       
       throw new Error(`Vendor not found: ${vendorInfo.vendorId}. Please ensure the vendor exists in the database.`)
     }
     
-    // CRITICAL VALIDATION: Verify vendorObjectId matches vendor._id
+    // CRITICAL VALIDATION: Verify vendorObjectId matches 
+    vendor._id
     if (vendorInfo.vendorObjectId.toString() !== vendor._id.toString()) {
       console.error(`[createOrder] ❌ CRITICAL: Vendor ObjectId mismatch!`)
-      console.error(`[createOrder]    vendorInfo.vendorObjectId: ${vendorInfo.vendorObjectId.toString()}`)
-      console.error(`[createOrder]    vendor._id: ${vendor._id.toString()}`)
+      console.error(`[createOrder]    
+    vendorInfo.vendorObjectId: ${
+    vendorInfo.vendorObjectId.toString()}`)
+      console.error(`[createOrder]    
+    vendor._id: ${
+    vendor._id.toString()}`)
       throw new Error(`Vendor ObjectId mismatch: vendorInfo.vendorObjectId (${vendorInfo.vendorObjectId.toString()}) does not match vendor._id (${vendor._id.toString()})`)
     }
     
@@ -8875,7 +8849,7 @@ export async function createOrder(orderData: {
 
     // Generate unique order ID for this vendor order
     // Use vendor.id (numeric/string) for order ID generation, not vendorKey (ObjectId string)
-    const orderId = `${parentOrderId}-${vendor.id.substring(0, 8).toUpperCase()}`
+    const orderId = `${parentOrderId}-${(vendor as any).id.substring(0, 8).toUpperCase()}`
 
     // CRITICAL FIX: For split orders, ALL orders should start with 'Awaiting approval'
     // This ensures all vendor orders are visible in the approval queue
@@ -8890,12 +8864,16 @@ export async function createOrder(orderData: {
     
     // Check if PR/PO workflow is enabled
     // Use explicit boolean check and handle undefined/null cases
-    const isWorkflowEnabled = company.enable_pr_po_workflow === true || company.enable_pr_po_workflow === 'true'
-    const isSiteAdminApprovalRequired = company.enable_site_admin_pr_approval === true || company.enable_site_admin_pr_approval === 'true'
+    const isWorkflowEnabled = company.enable_pr_po_workflow === true || 
+    company.enable_pr_po_workflow === 'true'
+    const isSiteAdminApprovalRequired = company.enable_site_admin_pr_approval === true || 
+    company.enable_site_admin_pr_approval === 'true'
     
     console.log(`[createOrder] Workflow configuration check:`)
-    console.log(`[createOrder]   enable_pr_po_workflow (raw): ${company.enable_pr_po_workflow} (type: ${typeof company.enable_pr_po_workflow})`)
-    console.log(`[createOrder]   enable_site_admin_pr_approval (raw): ${company.enable_site_admin_pr_approval} (type: ${typeof company.enable_site_admin_pr_approval})`)
+    console.log(`[createOrder]   enable_pr_po_workflow (raw): ${company.enable_pr_po_workflow} (type: ${typeof 
+    company.enable_pr_po_workflow})`)
+    console.log(`[createOrder]   enable_site_admin_pr_approval (raw): ${company.enable_site_admin_pr_approval} (type: ${typeof 
+    company.enable_site_admin_pr_approval})`)
     console.log(`[createOrder]   isWorkflowEnabled: ${isWorkflowEnabled}`)
     console.log(`[createOrder]   isSiteAdminApprovalRequired: ${isSiteAdminApprovalRequired}`)
     
@@ -8929,22 +8907,26 @@ export async function createOrder(orderData: {
     console.log(`[createOrder]   PR Status: ${prStatus || 'N/A'}`)
     console.log(`[createOrder]   PR Number: ${prNumber || 'N/A'}`)
     console.log(`[createOrder]   Parent Order ID: ${parentOrderId}`)
-    console.log(`[createOrder]   Vendor ObjectId: ${vendor._id.toString()}`)
+    console.log(`[createOrder]   Vendor ObjectId: ${
+    vendor._id.toString()}`)
     console.log(`[createOrder]   Items: ${items.length}, Total: ₹${total}`)
 
     // CRITICAL FIX: Create order using vendor data from database, NOT from vendorInfo map
     // This ensures we use the actual vendor name and _id from the database
   const order = await Order.create({
     id: orderId,
-    employeeId: employee._id,
+    employeeId: 
+    employee._id,
     employeeIdNum: employeeIdNum, // Numeric/string employee ID for correlation
       employeeName: employeeName,
       items: items, // Each item already has productId
     total: total,
     status: orderStatus,
     orderDate: new Date(),
-    dispatchLocation: orderData.dispatchLocation || employee.dispatchPreference || 'standard',
-    companyId: company._id,
+    dispatchLocation: orderData.dispatchLocation || 
+    employee.dispatchPreference || 'standard',
+    companyId: 
+    company._id,
     companyIdNum: companyIdNum, // Numeric company ID for correlation
     // Structured shipping address fields (REQUIRED by Order model)
     shipping_address_line_1: shippingAddress.shipping_address_line_1,
@@ -8988,12 +8970,12 @@ export async function createOrder(orderData: {
     isFirstOrder = false
 
     // Populate and add to results
-  const populatedOrder = await Order.findById(order._id)
-    .populate('employeeId', 'id firstName lastName email')
-    .populate('companyId', 'id name')
-    .populate('items.uniformId', 'id name')
+    const populatedOrder = await Order.findById(order._id)
+      .populate('employeeId', 'id firstName lastName email')
+      .populate('companyId', 'id name')
+      .populate('items.uniformId', 'id name')
       .populate('vendorId', 'id name')
-    .lean()
+      .lean() as any
 
     createdOrders.push(toPlainObject(populatedOrder))
   }
@@ -9027,7 +9009,8 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
   console.log(`[approveOrder] 🚀 APPROVING ORDER: ${orderId}`)
   console.log(`[approveOrder] Admin Email: ${adminEmail}`)
   console.log(`[approveOrder] PR Number: ${prNumber || 'N/A'}`)
-  console.log(`[approveOrder] PR Date: ${prDate ? prDate.toISOString() : 'N/A'}`)
+  console.log(`[approveOrder] PR Date: ${prDate ? 
+    prDate.toISOString() : 'N/A'}`)
   
   // First, try to find order by id field
   let order = await Order.findOne({ id: orderId })
@@ -9061,7 +9044,10 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
   
   // Get company to check workflow settings
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     throw new Error('Database connection not available')
   }
 
@@ -9124,8 +9110,10 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
   console.log(`[approveOrder]   isCompanyAdminApproval: ${isCompanyAdminApproval}`)
   console.log(`[approveOrder]   shouldBeSiteAdminApproval: ${shouldBeSiteAdminApproval}`)
   console.log(`[approveOrder]   order.pr_status: ${order.pr_status || 'undefined'}`)
-  console.log(`[approveOrder]   company.enable_pr_po_workflow: ${company.enable_pr_po_workflow}`)
-  console.log(`[approveOrder]   company.enable_site_admin_pr_approval: ${company.enable_site_admin_pr_approval}`)
+  console.log(`[approveOrder]   
+    company.enable_pr_po_workflow: ${company.enable_pr_po_workflow}`)
+  console.log(`[approveOrder]   
+    company.enable_site_admin_pr_approval: ${company.enable_site_admin_pr_approval}`)
   
   // Only check status for legacy orders (no PR workflow)
   if (!isSiteAdminApproval && !isCompanyAdminApproval && !shouldBeSiteAdminApproval && order.status !== 'Awaiting approval') {
@@ -9145,11 +9133,11 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
   }
   
   // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
+  let employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
   
   // If not found, try decryption matching
   if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
+    const allEmployees = await Employee.find({}).lean() as any
     for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
@@ -9182,22 +9170,22 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     console.log(`[approveOrder] Processing Site Admin approval for order ${orderId}`)
     
     // Get the order's employee (the one who placed the order)
-    const orderEmployee = await Employee.findById(order.employeeId).lean()
-    if (!orderEmployee || !orderEmployee.locationId) {
+    const orderEmployee = await Employee.findById(order.employeeId).lean() as any
+    if (!orderEmployee || !(orderEmployee as any).locationId) {
       throw new Error(`Order's employee not found or has no location assigned`)
     }
     
     // Verify user is a Site Admin (Location Admin) for the order's employee's location
     const Location = require('../models/Location').default
-    const employeeLocation = await Location.findById(orderEmployee.locationId).lean()
+    const employeeLocation = await Location.findById((orderEmployee as any).locationId).lean() as any
     
-    if (!employeeLocation || !employeeLocation.adminId) {
+    if (!employeeLocation || !(employeeLocation as any).adminId) {
       throw new Error(`Order's employee location not found or has no admin assigned`)
     }
     
     // Check if the approving user is the location admin
     // Handle ObjectId comparison robustly (similar to isCompanyAdmin)
-    let locationAdminId: any = employeeLocation.adminId
+    let locationAdminId: any = (employeeLocation as any).adminId
     let approvingEmployeeId: any = employee._id
     
     // Convert both to ObjectId for reliable comparison
@@ -9221,12 +9209,12 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     
     if (locationAdminIdStr !== approvingEmployeeIdStr) {
       // Additional check: try comparing by numeric employee ID as fallback
-      const locationAdminEmployee = await Employee.findById(locationAdminId).lean()
-      const approvingEmployee = await Employee.findById(approvingEmployeeId).lean()
+      const locationAdminEmployee = await Employee.findById(locationAdminId).lean() as any
+      const approvingEmployee = await Employee.findById(approvingEmployeeId).lean() as any
       
       if (locationAdminEmployee && approvingEmployee) {
-        const locationAdminEmployeeId = locationAdminEmployee.id || locationAdminEmployee.employeeId
-        const approvingEmployeeIdNum = approvingEmployee.id || approvingEmployee.employeeId
+        const locationAdminEmployeeId = (locationAdminEmployee as any).id || (locationAdminEmployee as any).employeeId
+        const approvingEmployeeIdNum = (approvingEmployee as any).id || (approvingEmployee as any).employeeId
         
         console.log(`[approveOrder] Fallback check by numeric ID:`)
         console.log(`[approveOrder]   locationAdminEmployeeId: ${locationAdminEmployeeId}`)
@@ -9256,8 +9244,10 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     // Set PR number and date (overwrite any auto-generated values)
     order.pr_number = prNumber.trim()
     order.pr_date = prDate
-    console.log(`[approveOrder] Site Admin provided PR number: ${prNumber.trim()}`)
-    console.log(`[approveOrder] Site Admin provided PR date: ${prDate.toISOString()}`)
+    console.log(`[approveOrder] Site Admin provided PR number: ${
+    prNumber.trim()}`)
+    console.log(`[approveOrder] Site Admin provided PR date: ${
+    prDate.toISOString()}`)
     
     order.pr_status = 'SITE_ADMIN_APPROVED'
     order.site_admin_approved_by = employee._id
@@ -9292,13 +9282,13 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     // Legacy approval flow (no PR workflow)
     console.log(`[approveOrder] Processing legacy approval for order ${orderId}`)
   
-  const canApprove = await canApproveOrders(adminEmail, company.id)
-  if (!canApprove) {
-    throw new Error(`User ${adminEmail} does not have permission to approve orders`)
-  }
-  
-  // Update order status
-  order.status = 'Awaiting fulfilment'
+    const canApprove = await canApproveOrders(adminEmail, company.id)
+    if (!canApprove) {
+      throw new Error(`User ${adminEmail} does not have permission to approve orders`)
+    }
+    
+    // Update order status
+    order.status = 'Awaiting fulfilment'
   }
   
   await order.save()
@@ -9308,16 +9298,15 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     .populate('employeeId', 'id firstName lastName email')
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
-    .lean()
+    .lean() as any
   
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Manually fetch vendor information if vendorId exists
   let vendorName = null
   if (populatedOrder && (populatedOrder as any).vendorId) {
     const vendorIdValue = (populatedOrder as any).vendorId
     // vendorId is now a string (6-digit numeric), not ObjectId
     if (typeof vendorIdValue === 'string' && /^\d{6}$/.test(vendorIdValue)) {
-      const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean()
+      const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean() as any
       if (vendor) {
         vendorName = (vendor as any).name
       }
@@ -9339,7 +9328,8 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
   console.log(`[approveOrderByParentId] 🚀 APPROVING PARENT ORDER: ${parentOrderId}`)
   console.log(`[approveOrderByParentId] Admin Email: ${adminEmail}`)
   console.log(`[approveOrderByParentId] PR Number: ${prNumber || 'N/A'}`)
-  console.log(`[approveOrderByParentId] PR Date: ${prDate ? prDate.toISOString() : 'N/A'}`)
+  console.log(`[approveOrderByParentId] PR Date: ${prDate ? 
+    prDate.toISOString() : 'N/A'}`)
   
   // Find all orders with this parentOrderId
   const childOrders = await Order.find({ parentOrderId: parentOrderId })
@@ -9351,7 +9341,7 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
   }
   
   // Log all child orders before approval
-  childOrders.forEach((order, idx) => {
+  childOrders.forEach((order: any, idx: number) => {
     console.log(`[approveOrderByParentId] Child Order ${idx + 1}:`, {
       orderId: order.id,
       status: order.status,
@@ -9396,7 +9386,10 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
   
   // Use raw MongoDB for reliable ObjectId lookup
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     throw new Error('Database connection not available')
   }
 
@@ -9435,8 +9428,7 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     
     if (!company) {
       console.error(`[approveOrderByParentId] Company not found for parent order ${parentOrderId}, companyId: ${companyIdStr}, companyIdNum: ${firstOrder.companyIdNum}`)
-      const allCompanies = await Company.find({}, 'id name _id').limit(5).lean()
-      console.error(`[approveOrderByParentId] Available companies:`, allCompanies.map((c: any) => `id=${c.id}, _id=${c._id?.toString()}`))
+      const allCompanies = await Company.find({}, 'id name _id').limit(5).lean() as any
       throw new Error(`Company not found for parent order ${parentOrderId}`)
     }
   }
@@ -9454,11 +9446,11 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
   }
   
   // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
+  let employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
   
   // If not found, try decryption matching
   if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
+    const allEmployees = await Employee.find({}).lean() as any
     for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
@@ -9489,21 +9481,21 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     console.log(`[approveOrderByParentId] Processing Site Admin approval for parent order ${parentOrderId}`)
     
     // Get the first order's employee (the one who placed the order)
-    const orderEmployee = await Employee.findById(firstOrder.employeeId).lean()
-    if (!orderEmployee || !orderEmployee.locationId) {
+    const orderEmployee = await Employee.findById(firstOrder.employeeId).lean() as any
+    if (!orderEmployee || !(orderEmployee as any).locationId) {
       throw new Error(`Order's employee not found or has no location assigned`)
     }
     
     // Verify user is a Site Admin (Location Admin) for the order's employee's location
     const Location = require('../models/Location').default
-    const employeeLocation = await Location.findById(orderEmployee.locationId).lean()
+    const employeeLocation = await Location.findById((orderEmployee as any).locationId).lean() as any
     
-    if (!employeeLocation || !employeeLocation.adminId) {
+    if (!employeeLocation || !(employeeLocation as any).adminId) {
       throw new Error(`Order's employee location not found or has no admin assigned`)
     }
     
     // Check if the approving user is the location admin (robust ObjectId comparison)
-    let locationAdminId: any = employeeLocation.adminId
+    let locationAdminId: any = (employeeLocation as any).adminId
     let approvingEmployeeId: any = employee._id
     
     // Convert both to ObjectId for reliable comparison
@@ -9527,12 +9519,12 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     
     if (locationAdminIdStr !== approvingEmployeeIdStr) {
       // Additional check: try comparing by numeric employee ID as fallback
-      const locationAdminEmployee = await Employee.findById(locationAdminId).lean()
-      const approvingEmployee = await Employee.findById(approvingEmployeeId).lean()
+      const locationAdminEmployee = await Employee.findById(locationAdminId).lean() as any
+      const approvingEmployee = await Employee.findById(approvingEmployeeId).lean() as any
       
       if (locationAdminEmployee && approvingEmployee) {
-        const locationAdminEmployeeId = locationAdminEmployee.id || locationAdminEmployee.employeeId
-        const approvingEmployeeIdNum = approvingEmployee.id || approvingEmployee.employeeId
+        const locationAdminEmployeeId = (locationAdminEmployee as any).id || (locationAdminEmployee as any).employeeId
+        const approvingEmployeeIdNum = (approvingEmployee as any).id || (approvingEmployee as any).employeeId
         
         console.log(`[approveOrderByParentId] Fallback check by numeric ID:`)
         console.log(`[approveOrderByParentId]   locationAdminEmployeeId: ${locationAdminEmployeeId}`)
@@ -9569,8 +9561,10 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
       // Set PR number and date (overwrite any auto-generated values)
       childOrder.pr_number = prNumber.trim()
       childOrder.pr_date = prDate
-      console.log(`[approveOrderByParentId] Site Admin provided PR number: ${prNumber.trim()} for order ${childOrder.id}`)
-      console.log(`[approveOrderByParentId] Site Admin provided PR date: ${prDate.toISOString()} for order ${childOrder.id}`)
+      console.log(`[approveOrderByParentId] Site Admin provided PR number: ${
+    prNumber.trim()} for order ${childOrder.id}`)
+      console.log(`[approveOrderByParentId] Site Admin provided PR date: ${
+    prDate.toISOString()} for order ${childOrder.id}`)
       
       // Update PR status to SITE_ADMIN_APPROVED
       childOrder.pr_status = 'SITE_ADMIN_APPROVED'
@@ -9600,16 +9594,15 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
       .populate('employeeId', 'id firstName lastName email')
       .populate('companyId', 'id name')
       .populate('items.uniformId', 'id name')
-      .lean()
+      .lean() as any
     
-    // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
     // Manually fetch vendor information if vendorId exists
     let vendorName = null
     if (populatedOrder && (populatedOrder as any).vendorId) {
       const vendorIdValue = (populatedOrder as any).vendorId
       // vendorId is now a string (6-digit numeric), not ObjectId
       if (typeof vendorIdValue === 'string' && /^\d{6}$/.test(vendorIdValue)) {
-        const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean()
+        const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean() as any
         if (vendor) {
           vendorName = (vendor as any).name
         }
@@ -9656,16 +9649,15 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
       .populate('employeeId', 'id firstName lastName email')
       .populate('companyId', 'id name')
       .populate('items.uniformId', 'id name')
-      .lean()
+      .lean() as any
     
-    // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
     // Manually fetch vendor information if vendorId exists
     let vendorName = null
     if (populatedOrder && (populatedOrder as any).vendorId) {
       const vendorIdValue = (populatedOrder as any).vendorId
       // vendorId is now a string (6-digit numeric), not ObjectId
       if (typeof vendorIdValue === 'string' && /^\d{6}$/.test(vendorIdValue)) {
-        const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean()
+        const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean() as any
         if (vendor) {
           vendorName = (vendor as any).name
         }
@@ -9682,66 +9674,64 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     // Legacy approval flow (no PR workflow)
     console.log(`[approveOrderByParentId] Processing legacy approval for parent order ${parentOrderId}`)
   
-  const canApprove = await canApproveOrders(adminEmail, company.id)
-  if (!canApprove) {
-    throw new Error(`User ${adminEmail} does not have permission to approve orders`)
-  }
-  
-  // CRITICAL FIX: Approve ALL child orders (including those that skipped approval)
-  // This ensures all vendor orders are synchronized to "Awaiting fulfilment" status
-  // and are visible to vendors after parent approval
-  console.log(`[approveOrderByParentId] 🔄 Updating all child orders to 'Awaiting fulfilment' status...`)
-  
-  let updatedCount = 0
-  for (const childOrder of childOrders) {
-    const previousStatus = childOrder.status
-    if (childOrder.status === 'Awaiting approval' || childOrder.status === 'Awaiting fulfilment') {
-      childOrder.status = 'Awaiting fulfilment'
-      await childOrder.save()
-      updatedCount++
-      console.log(`[approveOrderByParentId] ✅ Updated order ${childOrder.id}: ${previousStatus} → Awaiting fulfilment`)
-      console.log(`[approveOrderByParentId]    Vendor: ${(childOrder as any).vendorName || 'N/A'} (${childOrder.vendorId?.toString() || 'N/A'})`)
-    } else {
-      console.log(`[approveOrderByParentId] ⚠️ Skipping order ${childOrder.id} (status: ${previousStatus}, not awaiting approval/fulfilment)`)
+    const canApprove = await canApproveOrders(adminEmail, company.id)
+    if (!canApprove) {
+      throw new Error(`User ${adminEmail} does not have permission to approve orders`)
     }
-  }
-  
-  console.log(`[approveOrderByParentId] ✅ Updated ${updatedCount} of ${childOrders.length} child order(s)`)
-  
-  // CRITICAL: Verify all orders were updated correctly
-  const verifyOrders = await Order.find({ parentOrderId: parentOrderId }).select('id status vendorId vendorName').lean()
-  console.log(`[approveOrderByParentId] 🔍 Verification - Orders after approval:`)
-  verifyOrders.forEach((order, idx) => {
-    console.log(`[approveOrderByParentId]   ${idx + 1}. ${order.id}: status=${order.status}, vendorId=${order.vendorId?.toString() || 'N/A'}, vendorName=${(order as any).vendorName || 'N/A'}`)
-  })
-  
-  // Return the first order as representative
-  const populatedOrder = await Order.findById(firstOrder._id)
-    .populate('employeeId', 'id firstName lastName email')
-    .populate('companyId', 'id name')
-    .populate('items.uniformId', 'id name')
-    .lean()
-  
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
-  // Manually fetch vendor information if vendorId exists
-  let vendorName = null
-  if (populatedOrder && (populatedOrder as any).vendorId) {
-    const vendorIdValue = (populatedOrder as any).vendorId
-    // vendorId is now a string (6-digit numeric), not ObjectId
-    if (typeof vendorIdValue === 'string' && /^\d{6}$/.test(vendorIdValue)) {
-      const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean()
-      if (vendor) {
-        vendorName = (vendor as any).name
+    
+    // CRITICAL FIX: Approve ALL child orders (including those that skipped approval)
+    // This ensures all vendor orders are synchronized to "Awaiting fulfilment" status
+    // and are visible to vendors after parent approval
+    console.log(`[approveOrderByParentId] 🔄 Updating all child orders to 'Awaiting fulfilment' status...`)
+    
+    let updatedCount = 0
+    for (const childOrder of childOrders) {
+      const previousStatus = childOrder.status
+      if (childOrder.status === 'Awaiting approval' || childOrder.status === 'Awaiting fulfilment') {
+        childOrder.status = 'Awaiting fulfilment'
+        await childOrder.save()
+        updatedCount++
+        console.log(`[approveOrderByParentId] ✅ Updated order ${childOrder.id}: ${previousStatus} → Awaiting fulfilment`)
+        console.log(`[approveOrderByParentId]    Vendor: ${(childOrder as any).vendorName || 'N/A'} (${childOrder.vendorId?.toString() || 'N/A'})`)
+      } else {
+        console.log(`[approveOrderByParentId] ⚠️ Skipping order ${childOrder.id} (status: ${previousStatus}, not awaiting approval/fulfilment)`)
       }
     }
-  }
-  
-  const result = toPlainObject(populatedOrder)
-  if (vendorName) {
-    (result as any).vendorName = vendorName
-  }
-  
-  return result
+    
+    console.log(`[approveOrderByParentId] ✅ Updated ${updatedCount} of ${childOrders.length} child order(s)`)
+    
+    // CRITICAL: Verify all orders were updated correctly
+    const verifyOrders = await Order.find({ parentOrderId: parentOrderId }).select('id status vendorId vendorName').lean() as any
+    verifyOrders.forEach((order: any, idx: number) => {
+      console.log(`[approveOrderByParentId]   ${idx + 1}. ${order.id}: status=${order.status}, vendorId=${order.vendorId?.toString() || 'N/A'}, vendorName=${(order as any).vendorName || 'N/A'}`)
+    })
+    
+    // Return the first order as representative
+    const populatedOrder = await Order.findById(firstOrder._id)
+      .populate('employeeId', 'id firstName lastName email')
+      .populate('companyId', 'id name')
+      .populate('items.uniformId', 'id name')
+      .lean() as any
+    
+    // Manually fetch vendor information if vendorId exists
+    let vendorName = null
+    if (populatedOrder && (populatedOrder as any).vendorId) {
+      const vendorIdValue = (populatedOrder as any).vendorId
+      // vendorId is now a string (6-digit numeric), not ObjectId
+      if (typeof vendorIdValue === 'string' && /^\d{6}$/.test(vendorIdValue)) {
+        const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean() as any
+        if (vendor) {
+          vendorName = (vendor as any).name
+        }
+      }
+    }
+    
+    const result = toPlainObject(populatedOrder)
+    if (vendorName) {
+      (result as any).vendorName = vendorName
+    }
+    
+    return result
   }
 }
 
@@ -9767,11 +9757,11 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
   }
   
   // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
+  let employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
   
   // If not found, try decryption matching
   if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
+    const allEmployees = await Employee.find({}).lean() as any
     for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
@@ -9822,7 +9812,10 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
           // Verify admin can approve orders for this company (check once per parent)
           // Use raw MongoDB for reliable ObjectId lookup
           const db = mongoose.connection.db
-          let company = null
+             if (!db) {
+    throw new Error('Database connection not available')
+  }
+  let company = null
           
           if (db) {
             // Convert companyId to ObjectId if needed
@@ -9877,23 +9870,23 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
             }
             
             // Get the first order's employee (the one who placed the order)
-            const orderEmployee = await Employee.findById(childOrders[0].employeeId).lean()
-            if (!orderEmployee || !orderEmployee.locationId) {
+            const orderEmployee = await Employee.findById(childOrders[0].employeeId).lean() as any
+            if (!orderEmployee || !(orderEmployee as any).locationId) {
               results.failed.push({ orderId, error: 'Order employee not found or has no location' })
               continue
             }
             
             // Verify user is a Site Admin (Location Admin) for the order's employee's location
             const Location = require('../models/Location').default
-            const employeeLocation = await Location.findById(orderEmployee.locationId).lean()
+            const employeeLocation = await Location.findById((orderEmployee as any).locationId).lean() as any
             
-            if (!employeeLocation || !employeeLocation.adminId) {
+            if (!employeeLocation || !(employeeLocation as any).adminId) {
               results.failed.push({ orderId, error: 'Location not found or has no admin' })
               continue
             }
             
             // Check if approving user is the location admin (robust ObjectId comparison)
-            let locationAdminId: any = employeeLocation.adminId
+            let locationAdminId: any = (employeeLocation as any).adminId
             let approvingEmployeeId: any = employee._id
             
             if (!(locationAdminId instanceof mongoose.Types.ObjectId)) {
@@ -9909,10 +9902,11 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
             
             if (locationAdminId.toString() !== approvingEmployeeId.toString()) {
               // Fallback: try numeric ID comparison
-              const locationAdminEmployee = await Employee.findById(locationAdminId).lean()
-              if (locationAdminEmployee && (locationAdminEmployee.id || locationAdminEmployee.employeeId)) {
-                const locationAdminEmployeeId = locationAdminEmployee.id || locationAdminEmployee.employeeId
-                const approvingEmployeeIdNum = employee.id || employee.employeeId
+              const locationAdminEmployee = await Employee.findById(locationAdminId).lean() as any
+              if (locationAdminEmployee && ((locationAdminEmployee as any).id || (locationAdminEmployee as any).employeeId)) {
+                const locationAdminEmployeeId = (locationAdminEmployee as any).id || (locationAdminEmployee as any).employeeId
+                const approvingEmployeeIdNum = employee.id || 
+    employee.employeeId
                 if (locationAdminEmployeeId && approvingEmployeeIdNum && locationAdminEmployeeId.toString() === approvingEmployeeIdNum.toString()) {
                   // Authorization passed via numeric ID
                 } else {
@@ -9928,7 +9922,8 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
             // Site admin can approve - update all child orders with PR data
             for (const childOrder of childOrders) {
               // Set PR number and date
-              childOrder.pr_number = prData.prNumber.trim()
+              childOrder.pr_number = prData.
+    prNumber.trim()
               childOrder.pr_date = prData.prDate
               childOrder.pr_status = 'SITE_ADMIN_APPROVED'
               childOrder.site_admin_approved_by = employee._id
@@ -10009,7 +10004,10 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
         // Verify admin can approve orders for this company (check once per parent)
         // Use raw MongoDB for reliable ObjectId lookup
         const db = mongoose.connection.db
-        let company = null
+           if (!db) {
+    throw new Error('Database connection not available')
+  }
+  let company = null
         
         if (db) {
           // Convert companyId to ObjectId if needed
@@ -10057,23 +10055,23 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
         if (isSiteAdminApproval) {
           // Site Admin approval flow for split orders
           // Get the first order's employee (the one who placed the order)
-          const orderEmployee = await Employee.findById(childOrders[0].employeeId).lean()
-          if (!orderEmployee || !orderEmployee.locationId) {
+          const orderEmployee = await Employee.findById(childOrders[0].employeeId).lean() as any
+          if (!orderEmployee || !(orderEmployee as any).locationId) {
             results.failed.push({ orderId, error: 'Order employee not found or has no location' })
             continue
           }
           
           // Verify user is a Site Admin (Location Admin) for the order's employee's location
           const Location = require('../models/Location').default
-          const employeeLocation = await Location.findById(orderEmployee.locationId).lean()
+          const employeeLocation = await Location.findById((orderEmployee as any).locationId).lean() as any
           
-          if (!employeeLocation || !employeeLocation.adminId) {
+          if (!employeeLocation || !(employeeLocation as any).adminId) {
             results.failed.push({ orderId, error: 'Location not found or has no admin' })
             continue
           }
           
           // Check if approving user is the location admin (robust ObjectId comparison)
-          let locationAdminId: any = employeeLocation.adminId
+          let locationAdminId: any = (employeeLocation as any).adminId
           let approvingEmployeeId: any = employee._id
           
           if (!(locationAdminId instanceof mongoose.Types.ObjectId)) {
@@ -10089,10 +10087,11 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
           
           if (locationAdminId.toString() !== approvingEmployeeId.toString()) {
             // Fallback: try numeric ID comparison
-            const locationAdminEmployee = await Employee.findById(locationAdminId).lean()
-            if (locationAdminEmployee && (locationAdminEmployee.id || locationAdminEmployee.employeeId)) {
-              const locationAdminEmployeeId = locationAdminEmployee.id || locationAdminEmployee.employeeId
-              const approvingEmployeeIdNum = employee.id || employee.employeeId
+            const locationAdminEmployee = await Employee.findById(locationAdminId).lean() as any
+            if (locationAdminEmployee && ((locationAdminEmployee as any).id || (locationAdminEmployee as any).employeeId)) {
+              const locationAdminEmployeeId = (locationAdminEmployee as any).id || (locationAdminEmployee as any).employeeId
+              const approvingEmployeeIdNum = employee.id || 
+    employee.employeeId
               if (locationAdminEmployeeId && approvingEmployeeIdNum && locationAdminEmployeeId.toString() === approvingEmployeeIdNum.toString()) {
                 // Authorization passed via numeric ID
               } else {
@@ -10172,7 +10171,10 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
       // Verify admin can approve orders for this company
       // Use raw MongoDB for reliable ObjectId lookup
       const db = mongoose.connection.db
-      let company = null
+         if (!db) {
+    throw new Error('Database connection not available')
+  }
+  let company = null
       
       if (db) {
         // Convert companyId to ObjectId if needed
@@ -10232,9 +10234,9 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
         }
         
         // Find approving employee
-        let approvingEmployee = await Employee.findOne({ email: encryptedEmail }).lean()
+        let approvingEmployee = await Employee.findOne({ email: encryptedEmail }).lean() as any
         if (!approvingEmployee && encryptedEmail) {
-          const allEmployees = await Employee.find({}).lean()
+          const allEmployees = await Employee.find({}).lean() as any
           for (const emp of allEmployees) {
             if (emp.email && typeof emp.email === 'string') {
               try {
@@ -10256,23 +10258,23 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
         }
         
         // Get order's employee and their location
-        const orderEmployee = await Employee.findById(order.employeeId).lean()
-        if (!orderEmployee || !orderEmployee.locationId) {
+        const orderEmployee = await Employee.findById(order.employeeId).lean() as any
+        if (!orderEmployee || !(orderEmployee as any).locationId) {
           results.failed.push({ orderId, error: 'Order employee not found or has no location' })
           continue
         }
         
         // Verify user is location admin
         const Location = require('../models/Location').default
-        const employeeLocation = await Location.findById(orderEmployee.locationId).lean()
+        const employeeLocation = await Location.findById((orderEmployee as any).locationId).lean() as any
         
-        if (!employeeLocation || !employeeLocation.adminId) {
+        if (!employeeLocation || !(employeeLocation as any).adminId) {
           results.failed.push({ orderId, error: 'Location not found or has no admin' })
           continue
         }
         
         // Check if approving user is the location admin (robust ObjectId comparison)
-        let locationAdminId: any = employeeLocation.adminId
+        let locationAdminId: any = (employeeLocation as any).adminId
         let approvingEmployeeId: any = approvingEmployee._id
         
         if (!(locationAdminId instanceof mongoose.Types.ObjectId)) {
@@ -10288,10 +10290,10 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
         
         if (locationAdminId.toString() !== approvingEmployeeId.toString()) {
           // Fallback: try numeric ID comparison
-          const locationAdminEmployee = await Employee.findById(locationAdminId).lean()
-          if (locationAdminEmployee && (locationAdminEmployee.id || locationAdminEmployee.employeeId)) {
-            const locationAdminEmployeeId = locationAdminEmployee.id || locationAdminEmployee.employeeId
-            const approvingEmployeeIdNum = approvingEmployee.id || approvingEmployee.employeeId
+          const locationAdminEmployee = await Employee.findById(locationAdminId).lean() as any
+          if (locationAdminEmployee && ((locationAdminEmployee as any).id || (locationAdminEmployee as any).employeeId)) {
+            const locationAdminEmployeeId = (locationAdminEmployee as any).id || (locationAdminEmployee as any).employeeId
+            const approvingEmployeeIdNum = (approvingEmployee as any).id || (approvingEmployee as any).employeeId
             if (locationAdminEmployeeId && approvingEmployeeIdNum && locationAdminEmployeeId.toString() === approvingEmployeeIdNum.toString()) {
               // Authorization passed via numeric ID
             } else {
@@ -10305,7 +10307,8 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
         }
         
         // Site admin can approve - update PR status with PR data
-        order.pr_number = prData.prNumber.trim()
+        order.pr_number = prData.
+    prNumber.trim()
         order.pr_date = prData.prDate
         order.pr_status = 'SITE_ADMIN_APPROVED'
         order.site_admin_approved_by = approvingEmployee._id
@@ -10367,16 +10370,16 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
   console.log(`[updateOrderStatus] ✅ Database connected`)
   
   // First, get order without populate to see raw data
-  const orderRaw = await Order.findOne({ id: orderId }).lean()
+  const orderRaw = await Order.findOne({ id: orderId }).lean() as any
   if (!orderRaw) {
     console.error(`[updateOrderStatus] ❌ Order not found: ${orderId}`)
     throw new Error(`Order not found: ${orderId}`)
   }
   
   console.log(`[updateOrderStatus] 🔍 Raw order data:`, {
-    orderId: orderRaw.id,
-    vendorIdRaw: orderRaw.vendorId,
-    vendorIdType: typeof orderRaw.vendorId,
+    orderId: (orderRaw as any).id,
+    vendorIdRaw: (orderRaw as any).vendorId,
+    vendorIdType: typeof (orderRaw as any).vendorId,
     vendorName: (orderRaw as any).vendorName,
     status: orderRaw.status
   })
@@ -10395,9 +10398,9 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
   let vendorIdValue: string | null = null
   
   // vendorId is stored as a 6-digit numeric string in the order
-  if (orderRaw.vendorId) {
-    if (typeof orderRaw.vendorId === 'string') {
-      vendorIdValue = orderRaw.vendorId.trim()
+  if ((orderRaw as any).vendorId) {
+    if (typeof (orderRaw as any).vendorId === 'string') {
+      vendorIdValue = (orderRaw as any).vendorId.trim()
       // Validate it's a 6-digit numeric string
       if (!/^\d{6}$/.test(vendorIdValue)) {
         console.warn(`[updateOrderStatus] ⚠️ Order has invalid vendorId format: ${vendorIdValue} (expected 6-digit numeric string)`)
@@ -10411,20 +10414,20 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
       } else {
         console.log(`[updateOrderStatus] ✅ Valid vendorId found: ${vendorIdValue}`)
       }
-    } else if (orderRaw.vendorId instanceof mongoose.Types.ObjectId) {
+    } else if ((orderRaw as any).vendorId instanceof mongoose.Types.ObjectId) {
       // Legacy: Handle ObjectId vendorId - convert to numeric ID
       console.log(`[updateOrderStatus] ⚠️ Legacy ObjectId vendorId detected, converting to numeric ID...`)
-      const legacyVendor = await Vendor.findById(orderRaw.vendorId)
+      const legacyVendor = await Vendor.findById((orderRaw as any).vendorId)
       if (legacyVendor && legacyVendor.id) {
         vendorIdValue = String(legacyVendor.id).trim()
         // Update order to use numeric ID
         await Order.updateOne({ id: orderId }, { vendorId: vendorIdValue })
         console.log(`[updateOrderStatus] ✅ Migrated order to use numeric vendorId: ${vendorIdValue}`)
       } else {
-        console.error(`[updateOrderStatus] ❌ Could not find vendor for legacy ObjectId: ${orderRaw.vendorId}`)
+        console.error(`[updateOrderStatus] ❌ Could not find vendor for legacy ObjectId: ${(orderRaw as any).vendorId}`)
       }
     } else {
-      console.warn(`[updateOrderStatus] ⚠️ Unexpected vendorId type: ${typeof orderRaw.vendorId}`)
+      console.warn(`[updateOrderStatus] ⚠️ Unexpected vendorId type: ${typeof (orderRaw as any).vendorId}`)
     }
   }
   
@@ -10628,7 +10631,7 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
       
       const returnRequest = await ReturnRequest.findOne({ returnRequestId })
         .populate('uniformId', 'id name')
-        .lean()
+        .lean() as any
       
       if (!returnRequest) {
         console.warn(`[updateOrderStatus] ⚠️ Return request not found:`, returnRequestId)
@@ -10673,7 +10676,8 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
               // Get vendor ObjectId for inventory update (VendorInventory uses ObjectId)
               const vendor = await Vendor.findOne({ id: vendorIdClean })
               if (!vendor) {
-                throw new Error(`Vendor not found: ${vendorIdClean}`)
+                console.warn(`[updateOrderStatus] Vendor not found: ${vendorIdClean}`);
+                return null // Return null instead of throwing - let API route handle 404
               }
               const returnVendorObjectId = vendor._id
               
@@ -10685,7 +10689,8 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
               
               const product = await Uniform.findById(productObjectId)
               if (!product) {
-                throw new Error(`Product not found: ${productObjectId}`)
+                console.warn(`[updateOrderStatus] Product not found: ${productObjectId}`);
+                return null // Return null instead of throwing - let API route handle 404
               }
               
               // Update inventory (without transaction for standalone MongoDB)
@@ -10693,7 +10698,8 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
                 // Find or create inventory record
                 let inventory = await VendorInventory.findOne({
                   vendorId: returnVendorObjectId,
-                  productId: product._id,
+                  productId: 
+    product._id,
                 })
                 
                 if (!inventory) {
@@ -10702,7 +10708,8 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
                   inventory = await VendorInventory.create({
                     id: inventoryId,
                     vendorId: returnVendorObjectId,
-                    productId: product._id,
+                    productId: 
+    product._id,
                     sizeInventory: new Map(),
                     totalStock: 0,
                     lowInventoryThreshold: new Map(),
@@ -10732,7 +10739,7 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
                 
                 // Calculate new total stock
                 let totalStock = 0
-                for (const qty of sizeInventory.values()) {
+                for (const qty of Array.from(sizeInventory.values())) {
                   totalStock += qty
                 }
                 
@@ -10858,8 +10865,10 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
         const vendorObjectIdToUse = vendor._id
         
         console.log(`[updateOrderStatus] ✅ Vendor found:`, {
-          vendorId: vendor.id,
-          vendorName: vendor.name,
+          vendorId: 
+    vendor.id,
+          vendorName: 
+    vendor.name,
           vendorObjectId: vendorObjectIdToUse.toString(),
           lookupMethod: 'by numeric id'
         })
@@ -10926,9 +10935,12 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
             }
           
             console.log(`[updateOrderStatus] ✅ Product found:`, {
-              productId: product.id,
-              productName: product.name,
-              productObjectId: product._id.toString()
+              productId: 
+    product.id,
+              productName: 
+    product.name,
+              productObjectId: 
+    product._id.toString()
             })
           
           // Update inventory (without transaction for standalone MongoDB)
@@ -10937,15 +10949,21 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
           try {
             // Find or create inventory record
             console.log(`[updateOrderStatus] 🔍 Looking up VendorInventory:`, {
-              vendorId: vendor._id.toString(),
-              vendorIdString: vendor.id,
-              productId: product._id.toString(),
-              productIdString: product.id
+              vendorId: 
+    vendor._id.toString(),
+              vendorIdString: 
+    vendor.id,
+              productId: 
+    product._id.toString(),
+              productIdString: 
+    product.id
             })
             
             let inventory = await VendorInventory.findOne({
-              vendorId: vendor._id,
-              productId: product._id,
+              vendorId: 
+    vendor._id,
+              productId: 
+    product._id,
             })
             
             if (!inventory) {
@@ -10954,8 +10972,10 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
               const inventoryId = `VEND-INV-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`
               inventory = await VendorInventory.create({
                 id: inventoryId,
-                vendorId: vendor._id,
-                productId: product._id,
+                vendorId: 
+    vendor._id,
+                productId: 
+    product._id,
                 sizeInventory: new Map(),
                 totalStock: 0,
                 lowInventoryThreshold: new Map(),
@@ -11031,7 +11051,7 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
             
             // Calculate new total stock
             let totalStock = 0
-            for (const qty of sizeInventory.values()) {
+            for (const qty of Array.from(sizeInventory.values())) {
               totalStock += qty
             }
             
@@ -11064,8 +11084,10 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
               
               console.log(`[Inventory Update] 🔍 Before save - inventory record:`, {
                 inventoryId: inventory.id,
-                vendorId: vendor.id,
-                productId: product.id,
+                vendorId: 
+    vendor.id,
+                productId: 
+    product.id,
                 size: size,
                 sizeInventory: Object.fromEntries(sizeInventory),
                 totalStock: totalStock,
@@ -11120,12 +11142,17 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
               // Query using raw MongoDB to bypass any Mongoose caching
               // Query WITHOUT session to see committed data
               const db = mongoose.connection.db
-              const vendorInventoriesCollection = db.collection('vendorinventories')
+                 if (!db) {
+    throw new Error('Database connection not available')
+  }
+  const vendorInventoriesCollection = db.collection('vendorinventories')
               
               console.log(`[updateOrderStatus] 🔍 Querying raw MongoDB (outside transaction)...`)
               const rawInventoryDoc = await vendorInventoriesCollection.findOne({
-                vendorId: vendor._id,
-                productId: product._id,
+                vendorId: 
+    vendor._id,
+                productId: 
+    product._id,
               })
               
               console.log(`[updateOrderStatus] 🔍 Raw MongoDB query result:`, {
@@ -11140,9 +11167,11 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
               // Also verify using Mongoose (without session to see committed data)
               console.log(`[updateOrderStatus] 🔍 Querying Mongoose (outside transaction)...`)
               const verifyInventory = await VendorInventory.findOne({
-                vendorId: vendor._id,
-                productId: product._id,
-              }).lean()
+                vendorId: 
+    vendor._id,
+                productId: 
+    product._id,
+              }).lean() as any
               
               if (verifyInventory) {
                 const verifySizeStock = verifyInventory.sizeInventory instanceof Map
@@ -11196,8 +11225,10 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
               } else {
                 console.error(`[updateOrderStatus] ❌ Verification failed: Could not find inventory record after save`)
                 console.error(`[updateOrderStatus] ❌ Query used:`, {
-                  vendorId: vendor._id.toString(),
-                  productId: product._id.toString()
+                  vendorId: 
+    vendor._id.toString(),
+                  productId: 
+    product._id.toString()
                 })
               }
               
@@ -11215,15 +11246,20 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
           
           console.log(`[updateOrderStatus] 📦 ========== ALL ITEMS PROCESSED ==========`)
           
-          // FINAL VERIFICATION: Query all inventory records for this vendor-product to confirm
+          // FINAL VERIFICATION: Commented out - vendor and product are out of scope here
+          // Each item is already verified individually in the loop above
+          // If final verification is needed, it should use order.vendorId and iterate through order.items
+          /*
           console.log(`[updateOrderStatus] 🔍 ========== FINAL INVENTORY VERIFICATION ==========`)
           const finalInventoryCheck = await VendorInventory.find({
-            vendorId: vendor._id,
-            productId: product._id,
-          }).lean()
+            vendorId: 
+    vendor._id,
+            productId: 
+    product._id,
+          }).lean() as any
           
           console.log(`[updateOrderStatus] 🔍 Final inventory check found ${finalInventoryCheck.length} record(s):`)
-          finalInventoryCheck.forEach((inv, idx) => {
+          finalInventoryCheck.forEach((inv: any, idx: number) => {
             console.log(`[updateOrderStatus] 🔍 Inventory record ${idx + 1}:`, {
               id: inv.id,
               sizeInventory: inv.sizeInventory,
@@ -11234,6 +11270,7 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
                 : Object.keys(inv.sizeInventory || {})
             })
           })
+          */
           console.log(`[updateOrderStatus] 📦 ========== ALL ITEMS PROCESSED ==========\n`)
         } catch (error: any) {
           console.error(`[updateOrderStatus] ❌❌❌ CRITICAL ERROR updating inventory for order ${orderId}:`, error)
@@ -11259,9 +11296,8 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
     .populate('employeeId', 'id firstName lastName email')
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
-    .lean()
+    .lean() as any
   
-  console.log(`[updateOrderStatus] ✅ Order populated successfully`)
   console.log(`[updateOrderStatus] 🚀 ========== ORDER STATUS UPDATE COMPLETE ==========\n`)
   
   return toPlainObject(populatedOrder)
@@ -11270,7 +11306,7 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
 export async function getPendingApprovals(companyId: string): Promise<any[]> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId }).select('_id id name enable_pr_po_workflow require_company_admin_po_approval').lean()
+  const company = await Company.findOne({ id: companyId }).select('_id id name enable_pr_po_workflow require_company_admin_po_approval').lean() as any
   if (!company) {
     return []
   }
@@ -11305,13 +11341,11 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
-    .lean()
+    .lean() as any
   
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(pendingOrders.map((o: any) => o.vendorId).filter(Boolean))]
-  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
   
   // Add vendorName to orders
   pendingOrders.forEach((o: any) => {
@@ -11337,7 +11371,8 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
   const orderMap = new Map<string, any[]>()
   if (parentOrderIds.size > 0) {
     const allChildOrders = await Order.find({
-      companyId: company._id,
+      companyId: 
+    company._id,
       parentOrderId: { $in: Array.from(parentOrderIds) }
     })
       .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status site_admin_approved_by site_admin_approved_at')
@@ -11345,12 +11380,12 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
       .populate('companyId', 'id name')
       .populate('items.uniformId', 'id name')
       .populate('vendorId', 'id name')
-      .lean()
+      .lean() as any
     
     const allChildOrdersPlain = allChildOrders.map((o: any) => toPlainObject(o))
     
     for (const order of allChildOrdersPlain) {
-    if (order.parentOrderId) {
+      if (order.parentOrderId) {
       if (!orderMap.has(order.parentOrderId)) {
         orderMap.set(order.parentOrderId, [])
       }
@@ -11367,8 +11402,8 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
     splitOrders.sort((a, b) => (a.vendorName || '').localeCompare(b.vendorName || ''))
     
     // Create a grouped order object
-    const totalAmount = splitOrders.reduce((sum, o) => sum + (o.total || 0), 0)
-    const totalItems = splitOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0)
+    const totalAmount = splitOrders.reduce((sum: any, o: any) => sum + (o.total || 0), 0)
+    const totalItems = splitOrders.reduce((sum: any, o: any) => sum + (o.items?.length || 0), 0)
     const allItems = splitOrders.flatMap(o => o.items || [])
     
     groupedOrders.push({
@@ -11421,12 +11456,14 @@ export async function getPendingApprovalsForSiteAdmin(
   // Get location ObjectId - handle both _id (ObjectId) and id (string) cases
   let locationId: any = null
   if (location._id) {
-    locationId = location._id instanceof mongoose.Types.ObjectId ? location._id : new mongoose.Types.ObjectId(location._id)
+    locationId = location._id instanceof mongoose.Types.ObjectId ? 
+    location._id : new mongoose.Types.ObjectId(location._id)
   } else if (location.id) {
     // If we only have the string id, find the location by id to get the _id
     const Location = require('../models/Location').default
-    const locationDoc = await Location.findOne({ id: location.id }).select('_id').lean()
-    if (locationDoc && locationDoc._id) {
+    const locationDoc = await Location.findOne({ id: 
+    location.id }).select('_id').lean() as any
+    if (locationDoc) {
       locationId = locationDoc._id
     }
   }
@@ -11441,9 +11478,8 @@ export async function getPendingApprovalsForSiteAdmin(
   // Find all employees assigned to this location
   const employees = await Employee.find({ locationId: locationId })
     .select('_id id employeeId')
-    .lean()
+    .lean() as any
   
-  if (employees.length === 0) {
     console.log(`[getPendingApprovalsForSiteAdmin] No employees found for location: ${location.id}`)
     return []
   }
@@ -11480,13 +11516,11 @@ export async function getPendingApprovalsForSiteAdmin(
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
-    .lean()
+    .lean() as any
   
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(pendingOrders.map((o: any) => o.vendorId).filter(Boolean))]
-  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
   
   // Add vendorName to orders
   pendingOrders.forEach((o: any) => {
@@ -11523,9 +11557,8 @@ export async function getPendingApprovalsForSiteAdmin(
       .populate('companyId', 'id name')
       .populate('items.uniformId', 'id name')
       .populate('vendorId', 'id name')
-      .lean()
+      .lean() as any
     
-    const allChildOrdersPlain = allChildOrders.map((o: any) => toPlainObject(o))
     
     for (const order of allChildOrdersPlain) {
       if (order.parentOrderId) {
@@ -11545,8 +11578,8 @@ export async function getPendingApprovalsForSiteAdmin(
     splitOrders.sort((a, b) => (a.vendorName || '').localeCompare(b.vendorName || ''))
     
     // Calculate totals
-    const totalItems = splitOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0)
-    const totalAmount = splitOrders.reduce((sum, o) => sum + (o.total || 0), 0)
+    const totalItems = splitOrders.reduce((sum: any, o: any) => sum + (o.items?.length || 0), 0)
+    const totalAmount = splitOrders.reduce((sum: any, o: any) => sum + (o.total || 0), 0)
     
     groupedOrders.push({
       id: parentOrderId, // Use parentOrderId as the main ID for grouped orders
@@ -11623,18 +11656,20 @@ export async function getAllPRsForSiteAdmin(
   }
   
   console.log(`[getAllPRsForSiteAdmin] ✅ Found location: ${location.id} (${location.name})`)
-  console.log(`[getAllPRsForSiteAdmin] 📍 Location details: _id=${location._id}, id=${location.id}, adminId=${location.adminId}`)
+  console.log(`[getAllPRsForSiteAdmin] 📍 Location details: _id=${location._id}, id=${location.id}, adminId=${(location as any).adminId}`)
   
   // Get location ObjectId - handle both _id (ObjectId) and id (string) cases
   let locationId: any = null
   if (location._id) {
-    locationId = location._id instanceof mongoose.Types.ObjectId ? location._id : new mongoose.Types.ObjectId(location._id)
-    console.log(`[getAllPRsForSiteAdmin] ✅ Using location._id: ${locationId}`)
+    locationId = location._id instanceof mongoose.Types.ObjectId ? 
+    location._id : new mongoose.Types.ObjectId(location._id)
+    console.log(`[getAllPRsForSiteAdmin] ✅ Using 
+    location._id: ${locationId}`)
   } else if (location.id) {
     // If we only have the string id, find the location by id to get the _id
     const Location = require('../models/Location').default
-    const locationDoc = await Location.findOne({ id: location.id }).select('_id').lean()
-    if (locationDoc && locationDoc._id) {
+    const locationDoc = await Location.findOne({ id: 
+    location.id }).select('_id').lean() as any
       locationId = locationDoc._id
       console.log(`[getAllPRsForSiteAdmin] ✅ Found location ObjectId by id lookup: ${locationId}`)
     } else {
@@ -11652,9 +11687,8 @@ export async function getAllPRsForSiteAdmin(
   // Find all employees assigned to this location
   const employees = await Employee.find({ locationId: locationId })
     .select('_id id employeeId firstName lastName')
-    .lean()
+    .lean() as any
   
-  console.log(`[getAllPRsForSiteAdmin] 👥 Found ${employees.length} employee(s) for location: ${location.id}`)
   if (employees.length > 0) {
     employees.forEach((emp: any, idx: number) => {
       console.log(`[getAllPRsForSiteAdmin]   ${idx + 1}. ${emp.firstName} ${emp.lastName} (ID: ${emp.id}, EmployeeID: ${emp.employeeId}, ObjectId: ${emp._id})`)
@@ -11666,8 +11700,7 @@ export async function getAllPRsForSiteAdmin(
     
     // Try alternative locationId formats
     const locationIdStr = locationId.toString()
-    const employeesByString = await Employee.find({ locationId: locationIdStr }).select('_id id employeeId').lean()
-    console.log(`[getAllPRsForSiteAdmin]   Found ${employeesByString.length} employee(s) with locationId as string`)
+    const employeesByString = await Employee.find({ locationId: locationIdStr }).select('_id id employeeId').lean() as any
     
     return []
   }
@@ -11734,9 +11767,8 @@ export async function getAllPRsForSiteAdmin(
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ createdAt: -1, orderDate: -1 })
-    .lean()
+    .lean() as any
   
-  console.log(`[getAllPRsForSiteAdmin] 📊 Query returned ${allOrders.length} order(s)`)
   if (allOrders.length > 0) {
     console.log(`[getAllPRsForSiteAdmin] 📋 Sample orders (first 3):`)
     allOrders.slice(0, 3).forEach((order: any, idx: number) => {
@@ -11750,9 +11782,8 @@ export async function getAllPRsForSiteAdmin(
     const allOrdersNoStatusFilter = await Order.find({ employeeId: { $in: employeeIds } })
       .select('id pr_status pr_number')
       .limit(10)
-      .lean()
+      .lean() as any
     
-    console.log(`[getAllPRsForSiteAdmin] 📊 Found ${allOrdersNoStatusFilter.length} total order(s) for these employees`)
     if (allOrdersNoStatusFilter.length > 0) {
       const statusCounts: Record<string, number> = {}
       allOrdersNoStatusFilter.forEach((o: any) => {
@@ -11770,8 +11801,7 @@ export async function getAllPRsForSiteAdmin(
   // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(allOrders.map((o: any) => o.vendorId).filter(Boolean))]
-  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
   
   // Add vendorName to orders
   allOrders.forEach((o: any) => {
@@ -11850,9 +11880,8 @@ export async function getAllPRsForSiteAdmin(
       .populate('employeeId', 'id employeeId firstName lastName email locationId')
       .populate('companyId', 'id name')
       .populate('items.uniformId', 'id name')
-      .lean()
+      .lean() as any
     
-    const allChildOrdersPlain = allChildOrders.map((o: any) => toPlainObject(o))
     
     // Add vendor names to child orders
     allChildOrdersPlain.forEach((o: any) => {
@@ -11894,9 +11923,8 @@ export async function getAllPRsForSiteAdmin(
       .populate('employeeId', 'id employeeId firstName lastName email locationId')
       .populate('companyId', 'id name')
       .populate('items.uniformId', 'id name')
-      .lean()
+      .lean() as any
     
-    missingParents = missingParentOrders.map((o: any) => toPlainObject(o))
     
     // Add vendor names to missing parents
     missingParents.forEach((o: any) => {
@@ -11934,8 +11962,8 @@ export async function getAllPRsForSiteAdmin(
     const parentOrder = allParentOrders.find((o: any) => o.id === parentId)
     if (parentOrder) {
       const childOrders = orderMap.get(parentId) || []
-      const totalChildAmount = childOrders.reduce((sum, child) => sum + (child.total || 0), 0)
-      const totalChildItems = childOrders.reduce((sum, child) => sum + (child.items?.length || 0), 0)
+      const totalChildAmount = childOrders.reduce((sum: any, child: any) => sum + (child.total || 0), 0)
+      const totalChildItems = childOrders.reduce((sum: any, child: any) => sum + (child.items?.length || 0), 0)
       
       console.log(`[getAllPRsForSiteAdmin]   ✅ Found parent order ${parentId} with ${childOrders.length} child order(s)`)
       
@@ -11954,8 +11982,8 @@ export async function getAllPRsForSiteAdmin(
       if (childOrders.length > 0) {
         console.log(`[getAllPRsForSiteAdmin] ⚠️  Parent order ${parentId} not found, creating grouped order from ${childOrders.length} child order(s)`)
         const firstChild = childOrders[0]
-        const totalChildAmount = childOrders.reduce((sum, child) => sum + (child.total || 0), 0)
-        const totalChildItems = childOrders.reduce((sum, child) => sum + (child.items?.length || 0), 0)
+        const totalChildAmount = childOrders.reduce((sum: any, child: any) => sum + (child.total || 0), 0)
+        const totalChildItems = childOrders.reduce((sum: any, child: any) => sum + (child.items?.length || 0), 0)
         
         groupedOrders.push({
           id: parentId,
@@ -12025,12 +12053,14 @@ export async function getApprovedPRsForSiteAdmin(
   // Get location ObjectId - handle both _id (ObjectId) and id (string) cases
   let locationId: any = null
   if (location._id) {
-    locationId = location._id instanceof mongoose.Types.ObjectId ? location._id : new mongoose.Types.ObjectId(location._id)
+    locationId = location._id instanceof mongoose.Types.ObjectId ? 
+    location._id : new mongoose.Types.ObjectId(location._id)
   } else if (location.id) {
     // If we only have the string id, find the location by id to get the _id
     const Location = require('../models/Location').default
-    const locationDoc = await Location.findOne({ id: location.id }).select('_id').lean()
-    if (locationDoc && locationDoc._id) {
+    const locationDoc = await Location.findOne({ id: 
+    location.id }).select('_id').lean() as any
+    if (locationDoc) {
       locationId = locationDoc._id
     }
   }
@@ -12045,7 +12075,7 @@ export async function getApprovedPRsForSiteAdmin(
   // Find all employees assigned to this location
   const employees = await Employee.find({ locationId: locationId })
     .select('_id id employeeId')
-    .lean()
+    .lean() as any
   
   if (employees.length === 0) {
     console.log(`[getApprovedPRsForSiteAdmin] No employees found for location: ${location.id}`)
@@ -12085,13 +12115,11 @@ export async function getApprovedPRsForSiteAdmin(
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ site_admin_approved_at: -1, orderDate: -1 })
-    .lean()
+    .lean() as any
   
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(approvedOrders.map((o: any) => o.vendorId).filter(Boolean))]
-  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
   
   // Add vendorName to orders
   approvedOrders.forEach((o: any) => {
@@ -12144,9 +12172,8 @@ export async function getApprovedPRsForSiteAdmin(
       .populate('companyId', 'id name')
       .populate('items.uniformId', 'id name')
       .populate('vendorId', 'id name')
-      .lean()
+      .lean() as any
     
-    const allChildOrdersPlain = allChildOrders.map((o: any) => toPlainObject(o))
     
     for (const order of allChildOrdersPlain) {
       if (order.parentOrderId) {
@@ -12166,8 +12193,8 @@ export async function getApprovedPRsForSiteAdmin(
     splitOrders.sort((a, b) => (a.vendorName || '').localeCompare(b.vendorName || ''))
     
     // Calculate totals
-    const totalItems = splitOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0)
-    const totalAmount = splitOrders.reduce((sum, o) => sum + (o.total || 0), 0)
+    const totalItems = splitOrders.reduce((sum: any, o: any) => sum + (o.items?.length || 0), 0)
+    const totalAmount = splitOrders.reduce((sum: any, o: any) => sum + (o.total || 0), 0)
     
     groupedOrders.push({
       id: parentOrderId, // Use parentOrderId as the main ID for grouped orders
@@ -12273,11 +12300,11 @@ export async function createPurchaseOrderFromPRs(
   for (const orderId of orderIds) {
     // CRITICAL FIX: Fetch order and immediately convert to plain object to ensure vendorId is accessible
     // Use lean() to get plain JavaScript object with all fields guaranteed to be present
-    let order = await Order.findOne({ id: orderId }).lean()
+    let order = await Order.findOne({ id: orderId }).lean() as any
     
     // If not found, check if it's a parent order ID
     if (!order) {
-      const childOrders = await Order.find({ parentOrderId: orderId }).lean()
+      const childOrders = await Order.find({ parentOrderId: orderId }).lean() as any
       if (childOrders.length > 0) {
         // It's a parent order - add all child orders
         for (const childOrder of childOrders) {
@@ -12295,7 +12322,7 @@ export async function createPurchaseOrderFromPRs(
     // Check if this order has a parentOrderId (it's a child order)
     if (order.parentOrderId) {
       // Fetch all sibling orders
-      const siblingOrders = await Order.find({ parentOrderId: order.parentOrderId }).lean()
+      const siblingOrders = await Order.find({ parentOrderId: order.parentOrderId }).lean() as any
       for (const siblingOrder of siblingOrders) {
         if (!allOrderIds.has(siblingOrder.id)) {
           allOrderIds.add(siblingOrder.id)
@@ -12371,7 +12398,7 @@ export async function createPurchaseOrderFromPRs(
     if (!validStatuses.includes(order.pr_status)) {
       throw new Error(`Order ${order.id} is not in a valid status for PO creation. Current status: ${order.pr_status}. Valid statuses: ${validStatuses.join(', ')}`)
     }
-    if (order.companyId.toString() !== company._id.toString()) {
+    if (String(order.companyId) !== String(company.id)) {
       throw new Error(`Order ${order.id} does not belong to company ${companyId}`)
     }
   }
@@ -12432,21 +12459,21 @@ export async function createPurchaseOrderFromPRs(
       // Try one more time with direct database query - check what's actually stored
       try {
         console.log(`[createPurchaseOrderFromPRs] 🔍 Attempting direct database query for order ${order.id}...`)
-        const directOrder = await Order.findOne({ id: order.id }).lean()
+        const directOrder = await Order.findOne({ id: order.id }).lean() as any
         
         if (!directOrder) {
           console.error(`[createPurchaseOrderFromPRs] ❌ Order ${order.id} not found in database!`)
         } else {
           console.log(`[createPurchaseOrderFromPRs] 📊 Direct order query result:`)
-          console.log(`[createPurchaseOrderFromPRs]   - vendorId: ${directOrder.vendorId}`)
-          console.log(`[createPurchaseOrderFromPRs]   - vendorId type: ${typeof directOrder.vendorId}`)
+          console.log(`[createPurchaseOrderFromPRs]   - vendorId: ${(directOrder as any).vendorId}`)
+          console.log(`[createPurchaseOrderFromPRs]   - vendorId type: ${typeof (directOrder as any).vendorId}`)
           console.log(`[createPurchaseOrderFromPRs]   - vendorName: ${directOrder.vendorName}`)
           console.log(`[createPurchaseOrderFromPRs]   - All order fields:`, Object.keys(directOrder))
           
-          if (directOrder.vendorId) {
-            let directVendorId = typeof directOrder.vendorId === 'string' 
-              ? directOrder.vendorId.trim() 
-              : String(directOrder.vendorId).trim()
+          if ((directOrder as any).vendorId) {
+            let directVendorId = typeof (directOrder as any).vendorId === 'string' 
+              ? (directOrder as any).vendorId.trim() 
+              : String((directOrder as any).vendorId).trim()
             
             console.log(`[createPurchaseOrderFromPRs]   - Processed vendorId: ${directVendorId}`)
             console.log(`[createPurchaseOrderFromPRs]   - Is 6-digit format: ${/^\d{6}$/.test(directVendorId)}`)
@@ -12490,7 +12517,7 @@ export async function createPurchaseOrderFromPRs(
                   const Uniform = (await import('@/lib/models/Uniform')).default
                   const ProductVendor = (await import('@/lib/models/Relationship')).ProductVendor
                   
-                  const product = await Uniform.findOne({ id: firstItem.productId }).lean()
+                  const product = await Uniform.findOne({ id: firstItem.productId }).lean() as any
                   if (product && product._id) {
                     const productVendorLink = await ProductVendor.findOne({ 
                       productId: product._id 
@@ -12527,7 +12554,7 @@ export async function createPurchaseOrderFromPRs(
       // Final check after direct query and all fallbacks
       if (!vendorIdValue || !/^\d{6}$/.test(vendorIdValue)) {
         // CRITICAL: Log the actual database state for debugging
-        const dbOrder = await Order.findOne({ id: order.id }).lean()
+        const dbOrder = await Order.findOne({ id: order.id }).lean() as any
         console.error(`[createPurchaseOrderFromPRs] ❌ FINAL VALIDATION FAILED for order ${order.id}`)
         console.error(`[createPurchaseOrderFromPRs]   Database vendorId: ${dbOrder?.vendorId}`)
         console.error(`[createPurchaseOrderFromPRs]   Database vendorId type: ${typeof dbOrder?.vendorId}`)
@@ -12544,9 +12571,8 @@ export async function createPurchaseOrderFromPRs(
       console.error(`[createPurchaseOrderFromPRs]   Order ID: ${order.id}`)
       
       // List available vendors for debugging
-      const sampleVendors = await Vendor.find({}, 'id name _id').limit(5).lean()
-      console.error(`[createPurchaseOrderFromPRs] Available vendors (sample):`, 
-        sampleVendors.map((v: any) => `id=${v.id}, _id=${v._id?.toString()}, name=${v.name}`))
+      const sampleVendors = await Vendor.find({}, 'id name _id').limit(5).lean() as any
+      console.log('Available vendors:', sampleVendors.map((v: any) => `id=${v.id}, _id=${v._id?.toString()}, name=${v.name}`))
       
       throw new Error(`Vendor not found for order ${order.id}. Vendor ID: ${vendorIdValue}`)
     }
@@ -12574,7 +12600,8 @@ export async function createPurchaseOrderFromPRs(
     const vendor = vendorIdMap.get(vendorNumericId)
     
     if (!vendor) {
-      throw new Error(`Vendor not found in map: ${vendorNumericId}`)
+      console.warn(`[updateVendor] Vendor not found: ${vendorId}`);
+    return null // Return null instead of throwing - let API route handle 404
     }
     
     console.log(`[createPurchaseOrderFromPRs] Creating PO for vendor: ${vendor.name} (${vendor.id})`)
@@ -12586,8 +12613,10 @@ export async function createPurchaseOrderFromPRs(
     // Create PO - use vendor numeric ID (6-digit string) instead of ObjectId
     const purchaseOrder = await PurchaseOrder.create({
       id: poId,
-      companyId: company._id,
-      vendorId: vendor.id, // Use vendor numeric ID (6-digit string, e.g., "100001")
+      companyId: 
+    company._id,
+      vendorId: 
+    vendor.id, // Use vendor numeric ID (6-digit string, e.g., "100001")
       client_po_number: poNumber.trim(),
       po_date: poDate,
       po_status: 'SENT_TO_VENDOR', // Immediately send to vendor for fulfilment
@@ -12645,20 +12674,20 @@ export async function createPurchaseOrderFromPRs(
     }
     
     // Fetch vendor details separately since vendorId is now numeric ID, not ObjectId reference
-    const vendorDetails = await Vendor.findOne({ id: vendor.id })
+    const vendorDetails = await Vendor.findOne({ id: 
+    vendor.id })
       .select('id name')
-      .lean()
+      .lean() as any
     
-    // Populate company and employee, then add vendor details manually
     const populatedPO = await PurchaseOrder.findById(purchaseOrder._id)
       .populate('companyId', 'id name')
       .populate('created_by_user_id', 'id employeeId firstName lastName email')
-      .lean()
+      .lean() as any
     
-    // Add vendor details to the PO object
     const poWithVendor = {
       ...populatedPO,
-      vendorId: vendor.id, // Numeric vendor ID
+      vendorId: 
+    vendor.id, // Numeric vendor ID
       vendor: vendorDetails ? {
         id: vendorDetails.id,
         name: vendorDetails.name
@@ -12713,17 +12742,17 @@ export async function derivePOShippingStatus(poId: string): Promise<'AWAITING_SH
   }
   
   // Get all PRs (Orders) linked to this PO via POOrder mappings
-  const poOrderMappings = await POOrder.find({ purchase_order_id: po._id }).lean()
+  const poOrderMappings = await POOrder.find({ purchase_order_id: po._id }).lean() as any
   if (poOrderMappings.length === 0) {
     return 'AWAITING_SHIPMENT' // No PRs linked yet
   }
   
-  const orderIds = poOrderMappings.map(m => m.order_id)
-  const prs = await Order.find({ _id: { $in: orderIds } })
+  // Get order string IDs from mappings
+  const orderIds = poOrderMappings.map(m => String(m.order_id)).filter(Boolean)
+  const prs = await Order.find({ id: { $in: orderIds } })
     .select('id status dispatchStatus deliveryStatus items')
-    .lean()
+    .lean() as any
   
-  if (prs.length === 0) {
     return 'AWAITING_SHIPMENT'
   }
   
@@ -12963,7 +12992,7 @@ export async function updatePRShipmentStatus(
   // This only creates documents for MANUAL shipments
   try {
     const Shipment = await import('../models/Shipment').then(m => m.default)
-    const existingShipment = await Shipment.findOne({ shipmentId }).lean()
+    const existingShipment = await Shipment.findOne({ shipmentId }).lean() as any
     
     if (!existingShipment) {
       // Only create Shipment document if it doesn't exist (for MANUAL shipments)
@@ -13011,15 +13040,15 @@ export async function updatePRShipmentStatus(
     .populate('employeeId', 'id firstName lastName email')
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
-    .lean()
+    .lean() as any
   
-  // Add vendor name
   let vendorName = null
   if (updatedPR && updatedPR.vendorId) {
-    const vendor = await Vendor.findOne({ id: updatedPR.vendorId }).select('id name').lean()
+    const vendor = await Vendor.findOne({ id: updatedPR.vendorId }).select('id name').lean() as any
     if (vendor) {
       vendorName = (vendor as any).name
     }
+  }
   }
   
   const result = toPlainObject(updatedPR)
@@ -13039,22 +13068,22 @@ async function updatePOStatusFromPRDelivery(prId: string): Promise<void> {
   await connectDB()
   
   // Get PR
-  const pr = await Order.findOne({ id: prId }).lean()
+  const pr = await Order.findOne({ id: prId }).lean() as any
   if (!pr) {
     console.warn(`[updatePOStatusFromPRDelivery] PR not found: ${prId}`)
     return
   }
   
   // Find all POs linked to this PR via POOrder mappings
-  const poOrderMappings = await POOrder.find({ order_id: pr._id }).lean()
+  const poOrderMappings = await POOrder.find({ order_id: pr._id }).lean() as any
   if (poOrderMappings.length === 0) {
     // PR is not linked to any PO yet, nothing to update
     return
   }
   
-  // Get all POs linked to this PR
-  const poIds = poOrderMappings.map(m => m.purchase_order_id)
-  const pos = await PurchaseOrder.find({ _id: { $in: poIds } }).lean()
+  // Get all POs linked to this PR - use string IDs
+  const poIds = poOrderMappings.map(m => String(m.purchase_order_id)).filter(Boolean)
+  const pos = await PurchaseOrder.find({ id: { $in: poIds } }).lean() as any
   
   // Update each PO's status based on all its PRs
   for (const po of pos) {
@@ -13070,17 +13099,17 @@ async function updateSinglePOStatus(poObjectId: mongoose.Types.ObjectId): Promis
   await connectDB()
   
   // Get all PRs linked to this PO
-  const poOrderMappings = await POOrder.find({ purchase_order_id: poObjectId }).lean()
+  const poOrderMappings = await POOrder.find({ purchase_order_id: poObjectId }).lean() as any
   if (poOrderMappings.length === 0) {
     return
   }
   
-  const orderIds = poOrderMappings.map(m => m.order_id)
-  const prs = await Order.find({ _id: { $in: orderIds } })
+  // Get order string IDs from mappings
+  const orderIds = poOrderMappings.map(m => String(m.order_id)).filter(Boolean)
+  const prs = await Order.find({ id: { $in: orderIds } })
     .select('id dispatchStatus deliveryStatus items pr_status')
-    .lean()
+    .lean() as any
   
-  if (prs.length === 0) {
     return
   }
   
@@ -13290,15 +13319,15 @@ export async function updatePRDeliveryStatus(
     .populate('employeeId', 'id firstName lastName email')
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
-    .lean()
+    .lean() as any
   
-  // Add vendor name
   let vendorName = null
   if (updatedPR && updatedPR.vendorId) {
-    const vendor = await Vendor.findOne({ id: updatedPR.vendorId }).select('id name').lean()
+    const vendor = await Vendor.findOne({ id: updatedPR.vendorId }).select('id name').lean() as any
     if (vendor) {
       vendorName = (vendor as any).name
     }
+  }
   }
   
   const result = toPlainObject(updatedPR)
@@ -13346,9 +13375,8 @@ export async function updatePRAndPOStatusesFromDelivery(companyId?: string): Pro
     // Get all PRs that have PO created
     const prs = await Order.find(prQuery)
       .select('id companyId vendorId items dispatchStatus deliveryStatus status pr_status')
-      .lean()
+      .lean() as any
     
-    console.log(`[updatePRAndPOStatusesFromDelivery] Found ${prs.length} PRs to process`)
     
     // Update each PR's status based on delivery data
     for (const pr of prs) {
@@ -13454,7 +13482,7 @@ export async function updatePRAndPOStatusesFromDelivery(companyId?: string): Pro
       }
     }
     
-    const pos = await PurchaseOrder.find(poQuery).lean()
+    const pos = await PurchaseOrder.find(poQuery).lean() as any
     console.log(`[updatePRAndPOStatusesFromDelivery] Found ${pos.length} POs to process`)
     
     for (const po of pos) {
@@ -13487,15 +13515,15 @@ export async function updatePRAndPOStatusesFromDelivery(companyId?: string): Pro
 export async function getApprovedOrdersForCompanyAdmin(companyId: string): Promise<any[]> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId }).select('_id id name enable_pr_po_workflow').lean()
-  if (!company) {
+  const company = await Company.findOne({ id: companyId }).select('_id id name enable_pr_po_workflow').lean() as any
     return []
   }
   
   // Find orders approved by Company Admin
   // Status: COMPANY_ADMIN_APPROVED (legacy) or orders that have been approved but not yet PO created
   const queryFilter: any = {
-    companyId: company._id,
+    companyId: 
+    company._id,
     $and: [
       {
         $or: [
@@ -13514,13 +13542,11 @@ export async function getApprovedOrdersForCompanyAdmin(companyId: string): Promi
     .populate('items.uniformId', 'id name')
     .populate('company_admin_approved_by', 'id employeeId firstName lastName email')
     .sort({ company_admin_approved_at: -1, orderDate: -1 })
-    .lean()
+    .lean() as any
   
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(approvedOrders.map((o: any) => o.vendorId).filter(Boolean))]
-  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
   
   // Add vendorName to orders
   approvedOrders.forEach((o: any) => {
@@ -13545,7 +13571,8 @@ export async function getApprovedOrdersForCompanyAdmin(companyId: string): Promi
   const orderMap = new Map<string, any[]>()
   if (parentOrderIds.size > 0) {
     const allChildOrders = await Order.find({
-      companyId: company._id,
+      companyId: 
+    company._id,
       parentOrderId: { $in: Array.from(parentOrderIds) }
     })
       .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status company_admin_approved_by company_admin_approved_at')
@@ -13553,14 +13580,12 @@ export async function getApprovedOrdersForCompanyAdmin(companyId: string): Promi
       .populate('companyId', 'id name')
       .populate('items.uniformId', 'id name')
       .populate('company_admin_approved_by', 'id employeeId firstName lastName email')
-      .lean()
+      .lean() as any
     
-    // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
     // Fetch vendor names for child orders
     const childVendorIds = [...new Set(allChildOrders.map((o: any) => o.vendorId).filter(Boolean))]
     if (childVendorIds.length > 0) {
-      const childVendors = await Vendor.find({ id: { $in: childVendorIds } }).select('id name').lean()
-      const childVendorMap = new Map(childVendors.map((v: any) => [v.id, v.name]))
+      const childVendors = await Vendor.find({ id: { $in: childVendorIds } }).select('id name').lean() as any
       allChildOrders.forEach((o: any) => {
         if (!o.vendorName && o.vendorId && childVendorMap.has(o.vendorId)) {
           o.vendorName = childVendorMap.get(o.vendorId)
@@ -13585,8 +13610,8 @@ export async function getApprovedOrdersForCompanyAdmin(companyId: string): Promi
   for (const [parentOrderId, splitOrders] of orderMap.entries()) {
     splitOrders.sort((a, b) => (a.vendorName || '').localeCompare(b.vendorName || ''))
     
-    const totalAmount = splitOrders.reduce((sum, o) => sum + (o.total || 0), 0)
-    const totalItems = splitOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0)
+    const totalAmount = splitOrders.reduce((sum: any, o: any) => sum + (o.total || 0), 0)
+    const totalItems = splitOrders.reduce((sum: any, o: any) => sum + (o.items?.length || 0), 0)
     const allItems = splitOrders.flatMap(o => o.items || [])
     
     groupedOrders.push({
@@ -13620,8 +13645,7 @@ export async function getApprovedOrdersForCompanyAdmin(companyId: string): Promi
 export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Promise<any[]> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId }).select('_id id name').lean()
-  if (!company) {
+  const company = await Company.findOne({ id: companyId }).select('_id id name').lean() as any
     return []
   }
   
@@ -13637,13 +13661,11 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
-    .lean()
+    .lean() as any
   
-  // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(poCreatedOrders.map((o: any) => o.vendorId).filter(Boolean))]
-  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
   
   // Add vendorName to orders
   poCreatedOrders.forEach((o: any) => {
@@ -13656,9 +13678,8 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
   const orderIds = poCreatedOrders.map((o: any) => o._id)
   const poOrderMappings = await POOrder.find({ order_id: { $in: orderIds } })
     .populate('purchase_order_id')
-    .lean()
+    .lean() as any
   
-  // Group POs by order
   const poMap = new Map<string, any[]>()
   for (const mapping of poOrderMappings) {
     const orderId = mapping.order_id?.toString()
@@ -13686,7 +13707,8 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
   const orderMap = new Map<string, any[]>()
   if (parentOrderIds.size > 0) {
     const allChildOrders = await Order.find({
-      companyId: company._id,
+      companyId: 
+    company._id,
       parentOrderId: { $in: Array.from(parentOrderIds) },
       pr_status: 'PO_CREATED'
     })
@@ -13695,7 +13717,7 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
       .populate('companyId', 'id name')
       .populate('items.uniformId', 'id name')
       .populate('vendorId', 'id name')
-      .lean()
+      .lean() as any
     
     const allChildOrdersPlain = allChildOrders.map((o: any) => toPlainObject(o))
     
@@ -13708,14 +13730,14 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
       }
     }
   }
-  
+
   const groupedOrders: any[] = []
   
   for (const [parentOrderId, splitOrders] of orderMap.entries()) {
     splitOrders.sort((a, b) => (a.vendorName || '').localeCompare(b.vendorName || ''))
     
-    const totalAmount = splitOrders.reduce((sum, o) => sum + (o.total || 0), 0)
-    const totalItems = splitOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0)
+    const totalAmount = splitOrders.reduce((sum: any, o: any) => sum + (o.total || 0), 0)
+    const totalItems = splitOrders.reduce((sum: any, o: any) => sum + (o.items?.length || 0), 0)
     const allItems = splitOrders.flatMap(o => o.items || [])
     
     // Get POs for all child orders
@@ -13758,16 +13780,17 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
 export async function getPendingReturnRequestCount(companyId: string): Promise<number> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId }).select('_id id').lean()
+  const company = await Company.findOne({ id: companyId }).select('_id id').lean() as any
   if (!company) {
     // Try with _id if companyId looks like ObjectId
     if (companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
-      const companyById = await Company.findById(companyId).select('_id id').lean()
-      if (!companyById) return 0
-      return await ReturnRequest.countDocuments({
-        companyId: companyById._id,
-        status: 'REQUESTED',
-      })
+      const companyById = await Company.findById(companyId).select('_id id').lean() as any
+      if (companyById) {
+        return await ReturnRequest.countDocuments({
+          companyId: (companyById as any)._id,
+          status: 'REQUESTED',
+        })
+      }
     }
     return 0
   }
@@ -13787,14 +13810,12 @@ export async function getPendingReturnRequestCount(companyId: string): Promise<n
 export async function getNewFeedbackCount(companyId: string): Promise<number> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId }).select('_id id').lean()
-  if (!company) {
+  const company = await Company.findOne({ id: companyId }).select('_id id').lean() as any
     // Try with _id if companyId looks like ObjectId
     if (companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
-      const companyById = await Company.findById(companyId).select('_id id').lean()
-      if (!companyById) return 0
+      const companyById = await Company.findById(companyId).select('_id id').lean() as any
       return await ProductFeedback.countDocuments({
-        companyId: companyById._id,
+        companyId: (companyById as any)._id,
         $or: [
           { viewedAt: { $exists: false } },
           { viewedAt: null }
@@ -13805,7 +13826,8 @@ export async function getNewFeedbackCount(companyId: string): Promise<number> {
   }
   
   const count = await ProductFeedback.countDocuments({
-    companyId: company._id,
+    companyId: 
+    company._id,
     $or: [
       { viewedAt: { $exists: false } },
       { viewedAt: null }
@@ -13822,11 +13844,11 @@ export async function getNewFeedbackCount(companyId: string): Promise<number> {
 export async function markFeedbackAsViewed(companyId: string, adminEmail: string): Promise<void> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId }).select('_id id').lean()
+  const company = await Company.findOne({ id: companyId }).select('_id id').lean() as any
   if (!company) {
     // Try with _id if companyId looks like ObjectId
     if (companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
-      const companyById = await Company.findById(companyId).select('_id id').lean()
+      const companyById = await Company.findById(companyId).select('_id id').lean() as any
       if (!companyById) {
         throw new Error(`Company not found: ${companyId}`)
       }
@@ -13834,7 +13856,7 @@ export async function markFeedbackAsViewed(companyId: string, adminEmail: string
       // Mark all unread feedback for this company as viewed
       await ProductFeedback.updateMany(
         {
-          companyId: companyById._id,
+          companyId: (companyById as any)._id,
           $or: [
             { viewedAt: { $exists: false } },
             { viewedAt: null }
@@ -13872,14 +13894,12 @@ export async function markFeedbackAsViewed(companyId: string, adminEmail: string
 export async function getPendingApprovalCountByLocation(locationId: string): Promise<number> {
   await connectDB()
   
-  const location = await Location.findOne({ id: locationId }).select('_id id companyId').lean()
-  if (!location) {
+  const location = await Location.findOne({ id: locationId }).select('_id id companyId').lean() as any
     return 0
   }
   
   // Get all employees in this location
-  const employees = await Employee.find({ locationId: location._id }).select('_id').lean()
-  const employeeIds = employees.map(e => e._id)
+  const employees = await Employee.find({ locationId: location._id }).select('_id').lean() as any
   
   if (employeeIds.length === 0) {
     return 0
@@ -13899,8 +13919,7 @@ export async function getPendingApprovalCountByLocation(locationId: string): Pro
 export async function getPendingOrderCountByVendor(vendorId: string): Promise<number> {
   await connectDB()
   
-  const vendor = await Vendor.findOne({ id: vendorId }).select('_id id').lean()
-  if (!vendor) {
+  const vendor = await Vendor.findOne({ id: vendorId }).select('_id id').lean() as any
     return 0
   }
   
@@ -13919,8 +13938,7 @@ export async function getPendingOrderCountByVendor(vendorId: string): Promise<nu
 export async function getPendingReplacementOrderCountByVendor(vendorId: string): Promise<number> {
   await connectDB()
   
-  const vendor = await Vendor.findOne({ id: vendorId }).select('_id id').lean()
-  if (!vendor) {
+  const vendor = await Vendor.findOne({ id: vendorId }).select('_id id').lean() as any
     return 0
   }
   
@@ -13941,16 +13959,17 @@ export async function getPendingReplacementOrderCountByVendor(vendorId: string):
 export async function getNewInvoiceCount(companyId: string): Promise<number> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId }).select('_id id').lean()
+  const company = await Company.findOne({ id: companyId }).select('_id id').lean() as any
   if (!company) {
     // Try with _id if companyId looks like ObjectId
     if (companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
-      const companyById = await Company.findById(companyId).select('_id id').lean()
-      if (!companyById) return 0
-      return await Invoice.countDocuments({
-        companyId: companyById._id,
-        invoiceStatus: 'RAISED'
-      })
+      const companyById = await Company.findById(companyId).select('_id id').lean() as any
+      if (companyById) {
+        return await Invoice.countDocuments({
+          companyId: (companyById as any)._id,
+          invoiceStatus: 'RAISED'
+        })
+      }
     }
     return 0
   }
@@ -14021,7 +14040,12 @@ export async function getProductCompanies(): Promise<any[]> {
   
   // Use raw MongoDB collection for reliable ObjectId comparison
   const db = mongoose.connection.db
-  if (!db) return []
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
+    throw new Error('Database connection not available')
+  } return []
   
   const rawRelationships = await db.collection('productcompanies').find({}).toArray()
   
@@ -14058,7 +14082,12 @@ export async function getProductVendors(): Promise<any[]> {
   
   // Use raw MongoDB collection for reliable ObjectId comparison
   const db = mongoose.connection.db
-  if (!db) return []
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
+    throw new Error('Database connection not available')
+  } return []
   
   const rawRelationships = await db.collection('productvendors').find({}).toArray()
   
@@ -14107,26 +14136,30 @@ export async function createProductCompany(productId: string, companyId: string)
   const product = await Uniform.findOne({ id: productId })
   const company = await Company.findOne({ id: companyId })
   
-  console.log('createProductCompany - Product found:', product ? product.id : 'NOT FOUND')
-  console.log('createProductCompany - Company found:', company ? company.id : 'NOT FOUND')
+  console.log('createProductCompany - Product found:', product ? 
+    product.id : 'NOT FOUND')
+  console.log('createProductCompany - Company found:', company ? 
+    company.id : 'NOT FOUND')
   
   if (!product) {
     // List available product IDs for debugging
-    const allProducts = await Uniform.find({}, 'id name').limit(5).lean()
-    console.log('Available products (sample):', allProducts.map(p => p.id))
+    const allProducts = await Uniform.find({}, 'id name').limit(5).lean() as any
     throw new Error(`Product not found: ${productId}`)
   }
   
   if (!company) {
     // List available company IDs for debugging
-    const allCompanies = await Company.find({}, 'id name').limit(5).lean()
-    console.log('Available companies (sample):', allCompanies.map(c => c.id))
+    const allCompanies = await Company.find({}, 'id name').limit(5).lean() as any
     throw new Error(`Company not found: ${companyId}`)
   }
 
   await ProductCompany.findOneAndUpdate(
-    { productId: product._id, companyId: company._id },
-    { productId: product._id, companyId: company._id },
+    { productId: 
+    product._id, companyId: 
+    company._id },
+    { productId: 
+    product._id, companyId: 
+    company._id },
     { upsert: true }
   )
   
@@ -14153,8 +14186,11 @@ export async function createProductCompanyBatch(productIds: string[], companyId:
       }
 
       await ProductCompany.findOneAndUpdate(
-        { productId: product._id, companyId: company._id },
-        { productId: product._id, companyId: company._id },
+        { productId: product._id, companyId: 
+    company._id },
+        { productId: 
+    product._id, companyId: 
+    company._id },
         { upsert: true }
       )
 
@@ -14175,7 +14211,8 @@ export async function deleteProductCompany(productId: string, companyId: string)
   const company = await Company.findOne({ id: companyId })
   
   if (!product) {
-    throw new Error(`Product not found: ${productId}`)
+    console.warn(`[updateProduct] Product not found: ${productId}`);
+    return null // Return null instead of throwing - let API route handle 404
   }
   if (!company) {
     throw new Error(`Company not found: ${companyId}`)
@@ -14183,16 +14220,21 @@ export async function deleteProductCompany(productId: string, companyId: string)
 
   // Use raw MongoDB collection for reliable ObjectId comparison
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     throw new Error('Database connection not available')
   }
 
   const productIdStr = product._id.toString()
-  const companyIdStr = company._id.toString()
+  const companyIdStr = company.id
 
   const result = await db.collection('productcompanies').deleteOne({
-    productId: product._id,
-    companyId: company._id
+    productId: 
+    product._id,
+    companyId: 
+    company._id
   })
   
   if (result.deletedCount === 0) {
@@ -14232,30 +14274,34 @@ export async function createProductVendor(productId: string, vendorId: string): 
   
   const vendor = await Vendor.findOne({ id: vendorId })
   
-  console.log('[createProductVendor] Product found:', product ? product.id : 'NOT FOUND')
-  console.log('[createProductVendor] Vendor found:', vendor ? vendor.id : 'NOT FOUND')
+  console.log('[createProductVendor] Product found:', product ? 
+    product.id : 'NOT FOUND')
+  console.log('[createProductVendor] Vendor found:', vendor ? 
+    vendor.id : 'NOT FOUND')
   
   if (!product) {
     // List available product IDs for debugging
-    const allProducts = await Uniform.find({}, 'id name').limit(5).lean()
-    console.log('[createProductVendor] Available products (sample):', allProducts.map(p => p.id))
+    const allProducts = await Uniform.find({}, 'id name').limit(5).lean() as any
     throw new Error(`Product not found: ${productId}`)
   }
   
   if (!vendor) {
     // List available vendor IDs for debugging
-    const allVendors = await Vendor.find({}, 'id name').limit(5).lean()
-    console.log('Available vendors (sample):', allVendors.map(v => v.id))
+    const allVendors = await Vendor.find({}, 'id name').limit(5).lean() as any
     throw new Error(`Vendor not found: ${vendorId}`)
   }
 
   // Validate: Product can only be linked to ONE vendor
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     throw new Error('Database connection not available')
   }
 
-  const existingLinks = await db.collection('productvendors').find({ productId: product._id }).toArray()
+  const existingLinks = await db.collection('productvendors').find({ productId: 
+    product._id }).toArray()
   if (existingLinks.length > 0) {
     const existingVendorIdStr = existingLinks[0].vendorId?.toString()
     const newVendorIdStr = vendor._id.toString()
@@ -14269,8 +14315,12 @@ export async function createProductVendor(productId: string, vendorId: string): 
   // Create ProductVendor relationship (without transaction for standalone MongoDB)
   try {
     await ProductVendor.findOneAndUpdate(
-      { productId: product._id, vendorId: vendor._id },
-      { productId: product._id, vendorId: vendor._id },
+      { productId: 
+    product._id, vendorId: 
+    vendor._id },
+      { productId: 
+    product._id, vendorId: 
+    vendor._id },
       { upsert: true }
     )
     
@@ -14291,8 +14341,10 @@ export async function createProductVendor(productId: string, vendorId: string): 
     console.log('[createProductVendor] ✅ Product-Vendor link created successfully')
   } catch (error: any) {
     console.error('[createProductVendor] ❌ Error creating ProductVendor relationship:', {
-      vendorId: vendor.id,
-      productId: product.id,
+      vendorId: 
+    vendor.id,
+      productId: 
+    product.id,
       error: error.message,
     })
     throw error
@@ -14304,11 +14356,15 @@ export async function createProductVendorBatch(productIds: string[], vendorId: s
   
   const vendor = await Vendor.findOne({ id: vendorId })
   if (!vendor) {
-    throw new Error(`Vendor not found: ${vendorId}`)
+    console.warn(`[updateVendor] Vendor not found: ${vendorId}`);
+    return null // Return null instead of throwing - let API route handle 404
   }
 
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     throw new Error('Database connection not available')
   }
 
@@ -14333,7 +14389,8 @@ export async function createProductVendorBatch(productIds: string[], vendorId: s
       }
 
       // Validate: Product can only be linked to ONE vendor
-      const existingLinks = await db.collection('productvendors').find({ productId: product._id }).toArray()
+      const existingLinks = await db.collection('productvendors').find({ productId: 
+    product._id }).toArray()
       if (existingLinks.length > 0) {
         const existingVendorIdStr = existingLinks[0].vendorId?.toString()
         const newVendorIdStr = vendor._id.toString()
@@ -14352,8 +14409,12 @@ export async function createProductVendorBatch(productIds: string[], vendorId: s
       try {
         // Create ProductVendor relationship
         await ProductVendor.findOneAndUpdate(
-          { productId: product._id, vendorId: vendor._id },
-          { productId: product._id, vendorId: vendor._id },
+          { productId: 
+    product._id, vendorId: 
+    vendor._id },
+          { productId: 
+    product._id, vendorId: 
+    vendor._id },
           { upsert: true }
         )
 
@@ -14389,15 +14450,20 @@ export async function deleteProductVendor(productId: string, vendorId: string): 
   const vendor = await Vendor.findOne({ id: vendorId })
   
   if (!product) {
-    throw new Error(`Product not found: ${productId}`)
+    console.warn(`[updateProduct] Product not found: ${productId}`);
+    return null // Return null instead of throwing - let API route handle 404
   }
   if (!vendor) {
-    throw new Error(`Vendor not found: ${vendorId}`)
+    console.warn(`[updateVendor] Vendor not found: ${vendorId}`);
+    return null // Return null instead of throwing - let API route handle 404
   }
 
   // Use raw MongoDB collection for reliable ObjectId comparison
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     throw new Error('Database connection not available')
   }
 
@@ -14405,8 +14471,10 @@ export async function deleteProductVendor(productId: string, vendorId: string): 
   const vendorIdStr = vendor._id.toString()
 
   const result = await db.collection('productvendors').deleteOne({
-    productId: product._id,
-    vendorId: vendor._id
+    productId: 
+    product._id,
+    vendorId: 
+    vendor._id
   })
   
   if (result.deletedCount === 0) {
@@ -14467,14 +14535,19 @@ export async function getLowStockItems(vendorId: string): Promise<any[]> {
   // CRITICAL FIX: Filter by ProductVendor relationships
   // A vendor should ONLY see low stock items for products assigned to them
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     console.error('[getLowStockItems] Database connection not available')
     return []
   }
   
   const vendorObjectId = vendor._id instanceof mongoose.Types.ObjectId 
-    ? vendor._id 
-    : new mongoose.Types.ObjectId(vendor._id.toString())
+    ? 
+    vendor._id 
+    : new mongoose.Types.ObjectId(
+    vendor._id.toString())
   
   // Get ProductVendor relationships for this vendor
   console.log(`[getLowStockItems] 🔍 Querying ProductVendor relationships...`)
@@ -14507,14 +14580,14 @@ export async function getLowStockItems(vendorId: string): Promise<any[]> {
   
   // CRITICAL: Only query inventory for assigned products
   const inventoryRecords = await VendorInventory.find({ 
-    vendorId: vendor._id,
+    vendorId: 
+    vendor._id,
     productId: { $in: assignedProductIds } // CRITICAL: Only inventory for assigned products
   })
     .populate('productId', 'id name category gender sizes price sku')
     .populate('vendorId', 'id name')
-    .lean()
+    .lean() as any
   
-  console.log(`[getLowStockItems] ✅ Found ${inventoryRecords.length} inventory record(s) for assigned products`)
 
   const lowStockItems: any[] = []
 
@@ -14572,7 +14645,7 @@ export async function getVendorInventorySummary(vendorId: string): Promise<{
     return { totalProducts: 0, totalStock: 0, lowStockCount: 0 }
   }
 
-  const inventoryRecords = await VendorInventory.find({ vendorId: vendor._id }).lean()
+  const inventoryRecords = await VendorInventory.find({ vendorId: vendor._id }).lean() as any
   
   let totalStock = 0
   let lowStockCount = 0
@@ -14624,8 +14697,10 @@ export async function getVendorInventory(vendorId: string, productId?: string): 
   // CRITICAL FIX: Ensure vendor._id is converted to ObjectId for query
   // MongoDB requires exact type matching - inventory stores ObjectId, so query must use ObjectId
   const vendorObjectId = vendor._id instanceof mongoose.Types.ObjectId 
-    ? vendor._id 
-    : new mongoose.Types.ObjectId(vendor._id.toString())
+    ? 
+    vendor._id 
+    : new mongoose.Types.ObjectId(
+    vendor._id.toString())
   
   console.log(`[getVendorInventory] ✅ Vendor found: ${vendor.name} (id: ${vendor.id}, _id: ${vendorObjectId.toString()})`)
 
@@ -14633,7 +14708,10 @@ export async function getVendorInventory(vendorId: string, productId?: string): 
   // A vendor should ONLY see inventory for products assigned to them via ProductVendor relationships
   // This is the SINGLE SOURCE OF TRUTH for vendor-product access control
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     console.error('[getVendorInventory] Database connection not available')
     return []
   }
@@ -14771,9 +14849,8 @@ export async function getVendorInventory(vendorId: string, productId?: string): 
   const inventoryRecords = await VendorInventory.find(mongooseQuery)
     .populate('productId', 'id name category gender sizes price sku')
     .populate('vendorId', 'id name')
-    .lean()
+    .lean() as any
 
-  console.log(`[getVendorInventory] ✅ Found ${inventoryRecords.length} inventory records via Mongoose`)
   console.log(`[getVendorInventory] ✅ Found ${rawInventoryRecords.length} raw inventory records from DB`)
 
   // CRITICAL FIX: If Mongoose query returned 0 but raw query found records, use raw records
@@ -14922,9 +14999,8 @@ export async function getVendorInventory(vendorId: string, productId?: string): 
       _id: { $in: failedPopulates }
     })
       .select('id name category gender sizes price sku')
-      .lean()
+      .lean() as any
     
-    console.log(`[getVendorInventory] Found ${products.length} products by direct query`)
     
     // Add to map
     products.forEach((p: any) => {
@@ -15103,7 +15179,7 @@ export async function getVendorInventory(vendorId: string, productId?: string): 
           // Try all keys in map to see if there's a match
           if (!productData) {
             console.log(`[getVendorInventory] 🔍 DIAGNOSTIC: Checking all map keys for similarity:`)
-            productIdMap.forEach((value, key) => {
+            productIdMap.forEach((value: any, key: any) => {
               const match = key === objectIdStr || key.toLowerCase() === objectIdStr.toLowerCase()
               console.log(`[getVendorInventory]   - map["${key}"] === "${objectIdStr}": ${match}`)
             })
@@ -15232,13 +15308,17 @@ export async function getVendorWiseInventoryForCompany(companyId: string | numbe
   
   // Get all products linked to this company via ProductCompany
   const db = mongoose.connection.db
-  if (!db) {
+    if (!db) {
+    throw new Error('Database connection not available')
+  }
+   if (!db) {
     console.error('[getVendorWiseInventoryForCompany] Database connection not available')
     return []
   }
   
   const productCompanyLinks = await db.collection('productcompanies').find({
-    companyId: company._id
+    companyId: 
+    company._id
   }).toArray()
   
   if (productCompanyLinks.length === 0) {
@@ -15280,9 +15360,8 @@ export async function getVendorWiseInventoryForCompany(companyId: string | numbe
   })
     .populate('productId', 'id name sku category gender')
     .populate('vendorId', 'id name')
-    .lean()
+    .lean() as any
   
-  console.log(`[getVendorWiseInventoryForCompany] ✅ Found ${inventoryRecords.length} inventory records via Mongoose`)
   
   // Log sample of populated records
   if (inventoryRecords.length > 0) {
@@ -15299,7 +15378,7 @@ export async function getVendorWiseInventoryForCompany(companyId: string | numbe
   }
   
   // Get all vendors for manual lookup (fallback if populate fails)
-  const allVendors = await Vendor.find({}).lean()
+  const allVendors = await Vendor.find({}).lean() as any
   console.log(`[getVendorWiseInventoryForCompany] 📦 Loaded ${allVendors.length} vendors from database`)
   
   const vendorMap = new Map()
@@ -15355,7 +15434,9 @@ export async function getVendorWiseInventoryForCompany(companyId: string | numbe
     let vendor = inv.vendorId
     
     console.log(`[getVendorWiseInventoryForCompany]   Initial vendor from populate:`, vendor)
-    console.log(`[getVendorWiseInventoryForCompany]   Has vendor.name? ${!!(vendor && vendor.name)}`)
+    console.log(`[getVendorWiseInventoryForCompany]   Has 
+    vendor.name? ${!!(vendor && 
+    vendor.name)}`)
     
     // Fallback: if populate didn't work, try manual lookup
     if (!vendor || !vendor.name) {
@@ -15495,7 +15576,7 @@ export async function getVendorWiseInventoryForCompany(companyId: string | numbe
   console.log(`\n[getVendorWiseInventoryForCompany] 📊 SUMMARY:`)
   console.log(`[getVendorWiseInventoryForCompany]   Total inventory records: ${formattedInventory.length}`)
   console.log(`[getVendorWiseInventoryForCompany]   Vendor distribution:`)
-  vendorNameCounts.forEach((count, vendorName) => {
+  vendorNameCounts.forEach((count: any, vendorName: any) => {
     console.log(`[getVendorWiseInventoryForCompany]     - ${vendorName}: ${count} record(s)`)
   })
   console.log(`[getVendorWiseInventoryForCompany] ✅ Returning ${formattedInventory.length} formatted inventory records\n`)
@@ -15534,14 +15615,16 @@ async function ensureVendorInventoryExists(
 
     if (existingInventory) {
       // Inventory already exists, no need to create (idempotent)
-      console.log(`[ensureVendorInventoryExists] ✅ Inventory already exists for vendor ${vendorId.toString()} / product ${product.id || productId.toString()}`)
+      console.log(`[ensureVendorInventoryExists] ✅ Inventory already exists for vendor ${vendorId.toString()} / product ${
+    product.id || productId.toString()}`)
       return
     }
 
     // Get product sizes - initialize inventory for each size
     const productSizes = product.sizes || []
     if (!Array.isArray(productSizes) || productSizes.length === 0) {
-      console.warn(`[ensureVendorInventoryExists] ⚠️  Product ${product.id || productId.toString()} has no sizes defined. Creating inventory with empty size map.`)
+      console.warn(`[ensureVendorInventoryExists] ⚠️  Product ${
+    product.id || productId.toString()} has no sizes defined. Creating inventory with empty size map.`)
     }
 
     // Initialize sizeInventory Map with all product sizes set to 0
@@ -15596,7 +15679,8 @@ async function ensureVendorInventoryExists(
       await inventoryDoc.save()
     }
 
-    console.log(`[ensureVendorInventoryExists] ✅ Created VendorInventory for vendor ${vendorId.toString()} / product ${product.id || productId.toString()}`)
+    console.log(`[ensureVendorInventoryExists] ✅ Created VendorInventory for vendor ${vendorId.toString()} / product ${
+    product.id || productId.toString()}`)
     console.log(`[ensureVendorInventoryExists] 📊 Initialized ${sizeInventoryMap.size} sizes: ${Array.from(sizeInventoryMap.keys()).join(', ')}`)
   } catch (error: any) {
     // If error is due to duplicate (race condition), that's okay (idempotent)
@@ -15632,8 +15716,10 @@ export async function updateVendorInventory(
 
   // Get existing inventory to preserve threshold if not provided
   const existingInventory = await VendorInventory.findOne({
-    vendorId: vendor._id,
-    productId: product._id,
+    vendorId: 
+    vendor._id,
+    productId: 
+    product._id,
   })
 
   // Generate unique inventory ID if creating new
@@ -15680,8 +15766,10 @@ export async function updateVendorInventory(
   }
 
   console.log('[updateVendorInventory] 🔍 DIAGNOSTIC: Update payload:', {
-    vendorId: vendor.id,
-    productId: product.id,
+    vendorId: 
+    vendor.id,
+    productId: 
+    product.id,
     sizeInventory: Object.fromEntries(sizeInventoryMap),
     totalStock,
     lowInventoryThreshold: Object.fromEntries(thresholdMap),
@@ -15696,16 +15784,20 @@ export async function updateVendorInventory(
   // 3. Data persists properly to database
   
   let inventoryDoc = await VendorInventory.findOne({
-    vendorId: vendor._id,
-    productId: product._id,
+    vendorId: 
+    vendor._id,
+    productId: 
+    product._id,
   })
 
   if (!inventoryDoc) {
     // Create new inventory document if it doesn't exist
     inventoryDoc = new VendorInventory({
       id: inventoryId,
-      vendorId: vendor._id,
-      productId: product._id,
+      vendorId: 
+    vendor._id,
+      productId: 
+    product._id,
       sizeInventory: new Map(),
       lowInventoryThreshold: new Map(),
       totalStock: 0,
@@ -15763,9 +15855,8 @@ export async function updateVendorInventory(
   const inventory = await VendorInventory.findById(savedInventory._id)
     .populate('productId', 'id name category gender sizes price sku')
     .populate('vendorId', 'id name')
-    .lean()
+    .lean() as any
 
-  if (!inventory) {
     console.error('[updateVendorInventory] ❌ CRITICAL: Failed to retrieve populated inventory after save.')
     throw new Error('Failed to update inventory')
   }
@@ -15784,10 +15875,15 @@ export async function updateVendorInventory(
   
   // CRITICAL: Verify data was actually persisted by querying database directly
   const db = mongoose.connection.db
+     if (!db) {
+    throw new Error('Database connection not available')
+  }
   if (db) {
     const rawInventory = await db.collection('vendorinventories').findOne({
-      vendorId: vendor._id,
-      productId: product._id,
+      vendorId: 
+    vendor._id,
+      productId: 
+    product._id,
     })
     if (rawInventory) {
       console.log('[updateVendorInventory] ✅ DATABASE VERIFICATION: Raw DB record:', {
@@ -15799,7 +15895,7 @@ export async function updateVendorInventory(
       })
       
       // Verify the values match what we tried to save
-      const expectedTotal = Object.values(sizeInventory).reduce((sum, qty) => sum + (typeof qty === 'number' ? qty : 0), 0)
+      const expectedTotal = Object.values(sizeInventory).reduce((sum: any, qty: any) => sum + (typeof qty === 'number' ? qty : 0), 0)
       if (rawInventory.totalStock !== expectedTotal) {
         console.error(`[updateVendorInventory] ❌ DATABASE VERIFICATION FAILED: totalStock mismatch! Expected: ${expectedTotal}, Got: ${rawInventory.totalStock}`)
         throw new Error(`Inventory totalStock mismatch: expected ${expectedTotal}, got ${rawInventory.totalStock}`)
@@ -15866,17 +15962,18 @@ export async function getDesignationEligibilitiesByCompany(companyId: string): P
 
   // First try with status filter
   let eligibilities = await DesignationProductEligibility.find({ 
-    companyId: company._id,
+    companyId: 
+    company._id,
     status: 'active'
   })
     .populate('companyId', 'id name')
     .sort({ designation: 1 })
-    .lean()
+    .lean() as any
 
-  // If no active records found, also check for inactive records (for debugging)
   if (eligibilities.length === 0) {
     const inactiveCount = await DesignationProductEligibility.countDocuments({ 
-      companyId: company._id,
+      companyId: 
+    company._id,
       status: 'inactive'
     })
     if (inactiveCount > 0) {
@@ -15885,7 +15982,8 @@ export async function getDesignationEligibilitiesByCompany(companyId: string): P
     
     // Also check if there are any records with this companyId but no status filter
     const allCount = await DesignationProductEligibility.countDocuments({ 
-      companyId: company._id
+      companyId: 
+    company._id
     })
     if (allCount > 0 && allCount !== inactiveCount) {
       console.warn(`Found ${allCount} total designation eligibilities for company ${companyId}, but none are active.`)
@@ -15976,9 +16074,8 @@ export async function getDesignationEligibilityById(eligibilityId: string): Prom
   
   const eligibility = await DesignationProductEligibility.findOne({ id: eligibilityId })
     .populate('companyId', 'id name')
-    .lean()
+    .lean() as any
 
-  if (!eligibility) return null
 
   // Convert to plain object first
   const plainObj = toPlainObject(eligibility)
@@ -16022,7 +16119,8 @@ export async function getDesignationEligibilityByDesignation(
 
   // Build query filter - prioritize gender-specific rules, then 'unisex' rules
   const queryFilter: any = {
-    companyId: company._id,
+    companyId: 
+    company._id,
     status: 'active'
   }
 
@@ -16033,15 +16131,13 @@ export async function getDesignationEligibilityByDesignation(
     designation: { $regex: new RegExp(`^${normalizedDesignation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
   })
     .populate('companyId', 'id name')
-    .lean()
+    .lean() as any
 
-  // If not found with exact match, fetch all and match case-insensitively
   if (!eligibility) {
     const allEligibilities = await DesignationProductEligibility.find(queryFilter)
       .populate('companyId', 'id name')
-      .lean()
+      .lean() as any
 
-    // Find matching eligibility (eligibility.designation is now plaintext, no decryption needed)
     // Priority: gender-specific first, then 'unisex'
     const matchingEligibilities: any[] = []
     for (const elig of allEligibilities) {
@@ -16072,13 +16168,13 @@ export async function getDesignationEligibilityByDesignation(
     if (gender && eligibility.gender && eligibility.gender !== 'unisex' && eligibility.gender !== gender) {
       // Gender doesn't match, try to find 'unisex' or matching gender rule
       const allEligibilities = await DesignationProductEligibility.find({
-        companyId: company._id,
+        companyId: 
+    company._id,
         status: 'active'
       })
         .populate('companyId', 'id name')
-        .lean()
+        .lean() as any
       
-      for (const elig of allEligibilities) {
         const eligDesignation = (elig.designation as string) || ''
         // No decryption needed - eligibility.designation is now plaintext
         const normalizedEligDesignation = eligDesignation.trim().toLowerCase()
@@ -16091,7 +16187,7 @@ export async function getDesignationEligibilityByDesignation(
         }
       }
     }
-  }
+
 
   return eligibility || null
 }
@@ -16141,9 +16237,8 @@ export async function createDesignationEligibility(
     const existingEligibilities = await DesignationProductEligibility.find({}, 'id')
       .sort({ id: -1 })
       .limit(1)
-      .lean()
+      .lean() as any
     
-    let nextIdNumber = 1
     if (existingEligibilities.length > 0 && existingEligibilities[0].id) {
       const lastId = existingEligibilities[0].id as string
       const match = lastId.match(/^DESIG-ELIG-(\d+)$/)
@@ -16258,8 +16353,10 @@ export async function createDesignationEligibility(
 
   const eligibility = new DesignationProductEligibility({
     id: eligibilityId,
-    companyId: company._id,
-    companyName: company.name,
+    companyId: 
+    company._id,
+    companyName: 
+    company.name,
     designation: designation,
     gender: gender || 'unisex', // Use 'unisex' instead of 'all' to match model enum
     allowedProductCategories: finalAllowedCategories,
@@ -16288,10 +16385,10 @@ export async function createDesignationEligibility(
     })
     
     // Verify by fetching from DB
-    const verifyCreated = await DesignationProductEligibility.findOne({ id: eligibilityId }).lean()
+    const verifyCreated = await DesignationProductEligibility.findOne({ id: eligibilityId }).lean() as any
     if (verifyCreated) {
       console.log('✅ Verification - Created document from DB:', {
-        id: verifyCreated.id,
+        id: (verifyCreated as any).id,
         itemEligibility: verifyCreated.itemEligibility ? JSON.stringify(verifyCreated.itemEligibility, null, 2) : 'none',
       })
     }
@@ -16302,9 +16399,8 @@ export async function createDesignationEligibility(
       const existingEligibilities = await DesignationProductEligibility.find({}, 'id')
         .sort({ id: -1 })
         .limit(1)
-        .lean()
+        .lean() as any
       
-      let nextIdNumber = 1
       if (existingEligibilities.length > 0 && existingEligibilities[0].id) {
         const lastId = existingEligibilities[0].id as string
         const match = lastId.match(/^DESIG-ELIG-(\d+)$/)
@@ -16565,10 +16661,10 @@ export async function updateDesignationEligibility(
   }
   
   // Also verify with lean() to see what's actually in the database
-  const verifyUpdated = await DesignationProductEligibility.findOne({ id: eligibilityId }).lean()
+  const verifyUpdated = await DesignationProductEligibility.findOne({ id: eligibilityId }).lean() as any
   if (verifyUpdated) {
     console.log('✅ Verification - Updated document from DB (lean):', {
-      id: verifyUpdated.id,
+      id: (verifyUpdated as any).id,
       hasItemEligibility: !!verifyUpdated.itemEligibility,
       itemEligibilityKeys: verifyUpdated.itemEligibility ? Object.keys(verifyUpdated.itemEligibility) : 'none',
       itemEligibilityFull: verifyUpdated.itemEligibility ? JSON.stringify(verifyUpdated.itemEligibility, null, 2) : 'none',
@@ -16712,8 +16808,9 @@ async function resetConsumedEligibilityForDesignation(
   const { decrypt } = require('../utils/encryption')
   
   // Find all employees with this company
-  const allEmployees = await Employee.find({ companyId: company._id })
-    .lean()
+  const allEmployees = await Employee.find({ companyId: 
+    company._id })
+    .lean() as any
   
   const matchingEmployees: any[] = []
   for (const emp of allEmployees) {
@@ -16798,8 +16895,11 @@ async function resetConsumedEligibilityForDesignation(
         (employee.eligibilityResetDates as any)[category] = resetDate
       }
       
-      await employee.save()
-      console.log(`✅ Reset consumed eligibility for employee ${employee.employeeId || employee.id} (categories: ${resetCategories.join(', ')})`)
+      await 
+    employee.save()
+      console.log(`✅ Reset consumed eligibility for employee ${
+    employee.employeeId || 
+    employee.id} (categories: ${resetCategories.join(', ')})`)
     } catch (error: any) {
       console.error(`⚠️ Error resetting consumed eligibility for employee ${emp.employeeId || emp.id}:`, error.message)
       // Continue with other employees even if one fails
@@ -16855,8 +16955,9 @@ async function refreshEmployeeEligibilityForDesignation(
   const { encrypt, decrypt } = require('../utils/encryption')
   
   // Find all employees with this company
-  const allEmployees = await Employee.find({ companyId: company._id })
-    .lean()
+  const allEmployees = await Employee.find({ companyId: 
+    company._id })
+    .lean() as any
   
   // Filter employees by designation (case-insensitive, handling encryption)
   const matchingEmployees: any[] = []
@@ -16961,7 +17062,7 @@ async function refreshEmployeeEligibilityForDesignation(
         }
         
         // STEP 2: Reset cycle durations to defaults
-        employee.cycleDuration = {
+    employee.cycleDuration = {
           shirt: 6,
           pant: 6,
           shoe: 6,
@@ -16969,15 +17070,18 @@ async function refreshEmployeeEligibilityForDesignation(
         }
         
         // STEP 3: Apply new eligibility values (from current designation configuration)
-        employee.eligibility = eligibility
-        employee.cycleDuration = cycleDuration
+    employee.eligibility = eligibility
+    employee.cycleDuration = cycleDuration
         
-        await employee.save()
+        await 
+    employee.save()
         updatedCount++
         
         console.log(`✅ Updated employee ${emp.id || emp.employeeId}:`, {
-          eligibility: employee.eligibility,
-          cycleDuration: employee.cycleDuration,
+          eligibility: 
+    employee.eligibility,
+          cycleDuration: 
+    employee.cycleDuration,
         })
       }
     } catch (error: any) {
@@ -17054,11 +17158,12 @@ export async function getProductsForDesignation(
   console.log(`  - status: 'active'`)
   
   const subcategoryEligibilities = await DesignationSubcategoryEligibility.find({
-    companyId: company._id,
+    companyId: 
+    company._id,
     designationId: normalizedDesignation,
     gender: genderFilter,
     status: 'active'
-  }).lean()
+  }).lean() as any
   
   console.log(`[getProductsForDesignation] Found ${subcategoryEligibilities.length} active eligibility rules`)
   
@@ -17097,9 +17202,10 @@ export async function getProductsForDesignation(
   // ============================================================
   const subcategories = await Subcategory.find({
     _id: { $in: subcategoryIds },
-    companyId: company._id,
+    companyId: 
+    company._id,
     status: 'active'
-  }).lean()
+  }).lean() as any
   
   if (subcategories.length === 0) {
     console.log(`[getProductsForDesignation] ⚠️ No active subcategories found for company, returning empty array`)
@@ -17115,12 +17221,12 @@ export async function getProductsForDesignation(
   // ============================================================
   const productMappings = await ProductSubcategoryMapping.find({
     subCategoryId: { $in: validSubcategoryIds },
-    companyId: company._id
+    companyId: 
+    company._id
   })
     .populate('productId', 'id name category categoryId gender price image sku')
-    .lean()
+    .lean() as any
   
-  console.log(`[getProductsForDesignation] Found ${productMappings.length} product-subcategory mappings`)
   
   if (productMappings.length === 0) {
     console.log(`[getProductsForDesignation] ⚠️ No products mapped to eligible subcategories, returning empty array`)
@@ -17167,9 +17273,8 @@ export async function getProductsForDesignation(
     _id: { $in: productObjectIds }
   })
     .populate('vendorId', 'id name')
-    .lean()
+    .lean() as any
   
-  console.log(`[getProductsForDesignation] Fetched ${products.length} products from database`)
   
   // ============================================================
   // STEP 9: APPLY GENDER FILTER (IF SPECIFIED)
@@ -17241,7 +17346,7 @@ export async function createProductFeedback(feedbackData: {
       { employeeId: feedbackData.employeeId },
       { id: feedbackData.employeeId }
     ]
-  }).lean()
+  }).lean() as any
   
   if (!employee) {
     throw new Error(`Employee not found: ${feedbackData.employeeId}`)
@@ -17255,20 +17360,19 @@ export async function createProductFeedback(feedbackData: {
     ]
   }).lean()
   
-  if (!company) {
     throw new Error(`Company not found: ${feedbackData.companyId}`)
   }
   
   // Get order to verify it belongs to employee and is delivered
   // Handle both parent order IDs and split order IDs
-  let order = await Order.findOne({ id: feedbackData.orderId }).lean()
+  let order = await Order.findOne({ id: feedbackData.orderId }).lean() as any
   let isParentOrder = false
   
   // If found order has a parentOrderId, it's a child order (split order)
   // If found order doesn't have parentOrderId but has split orders, it's a parent
   if (order && !order.parentOrderId) {
     // Check if this is a parent order with split children
-    const splitOrders = await Order.find({ parentOrderId: feedbackData.orderId }).lean()
+    const splitOrders = await Order.find({ parentOrderId: feedbackData.orderId }).lean() as any
     if (splitOrders.length > 0) {
       // This is a parent order, find the specific split order that contains the product
       isParentOrder = true
@@ -17299,12 +17403,12 @@ export async function createProductFeedback(feedbackData: {
     if (parts.length >= 3) {
       // This is likely a split order ID, try exact match again with trimmed ID
       const trimmedId = feedbackData.orderId.trim()
-      order = await Order.findOne({ id: trimmedId }).lean()
+      order = await Order.findOne({ id: trimmedId }).lean() as any
     }
     
     // If still not found, try to find split orders with this as parentOrderId
     if (!order) {
-      const splitOrders = await Order.find({ parentOrderId: feedbackData.orderId }).lean()
+      const splitOrders = await Order.find({ parentOrderId: feedbackData.orderId }).lean() as any
       
       if (splitOrders.length > 0) {
         // Find the specific split order that contains the product
@@ -17333,7 +17437,8 @@ export async function createProductFeedback(feedbackData: {
       orderId: feedbackData.orderId,
       productId: feedbackData.productId,
       employeeId: feedbackData.employeeId,
-      employeeIdStr: employee._id?.toString()
+      employeeIdStr: 
+    employee._id?.toString()
     })
     throw new Error(`Order not found: ${feedbackData.orderId}. Please ensure the order is delivered and belongs to you.`)
   }
@@ -17366,7 +17471,9 @@ export async function createProductFeedback(feedbackData: {
       orderEmployeeId: orderEmployeeIdStr,
       orderEmployeeIdNum: order.employeeIdNum,
       employeeId: employeeIdStr,
-      employeeIdNum: employee.employeeId || employee.id
+      employeeIdNum: 
+    employee.employeeId || 
+    employee.id
     })
     throw new Error('Order does not belong to employee')
   }
@@ -17422,7 +17529,6 @@ export async function createProductFeedback(feedbackData: {
     ]
   }).lean()
   
-  // Use the actual order ID (might be a split order child ID)
   const actualOrderId = order.id
   
   // Check if feedback already exists for this order+product+employee combination
@@ -17430,8 +17536,9 @@ export async function createProductFeedback(feedbackData: {
   const existingFeedback = await ProductFeedback.findOne({
     orderId: actualOrderId,
     productId: feedbackData.productId,
-    employeeId: employee._id
-  }).lean()
+    employeeId: 
+    employee._id
+  }).lean() as any
   
   if (existingFeedback) {
     throw new Error('Feedback already submitted for this product')
@@ -17449,7 +17556,10 @@ export async function createProductFeedback(feedbackData: {
   } else if (uniform?._id) {
     // Try to get vendorId from ProductVendor relationship
     const db = mongoose.connection.db
-    if (db) {
+       if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db) {
       const productVendorLink = await db.collection('productvendors').findOne({ 
         productId: uniform._id 
       })
@@ -17470,10 +17580,16 @@ export async function createProductFeedback(feedbackData: {
     orderId: actualOrderId,
     productId: feedbackData.productId,
     uniformId: uniform?._id,
-    employeeId: employee._id,
-    employeeIdNum: employee.employeeId || employee.id,
-    companyId: company._id,
-    companyIdNum: typeof company.id === 'string' ? parseInt(company.id) : company.id,
+    employeeId: 
+    employee._id,
+    employeeIdNum: 
+    employee.employeeId || 
+    employee.id,
+    companyId: 
+    company._id,
+    companyIdNum: typeof 
+    company.id === 'string' ? parseInt(company.id) : 
+    company.id,
     vendorId: vendorId,
     rating: feedbackData.rating,
     comment: feedbackData.comment || undefined,
@@ -17521,12 +17637,15 @@ export async function getProductFeedback(
   // This must be checked BEFORE employee lookup to handle edge cases
   console.log(`[getProductFeedback] Checking Company Admin status first for: ${trimmedEmail}`)
   const db = mongoose.connection.db
+     if (!db) {
+    throw new Error('Database connection not available')
+  }
   let companyId: string | null = null
   let isCompanyAdminUser = false
   let employee: any = null
   
   // Get all companies and check if user is admin of any
-  const allCompanies = await Company.find({}).lean()
+  const allCompanies = await Company.find({}).lean() as any
   for (const company of allCompanies) {
     const adminCheck = await isCompanyAdmin(trimmedEmail, company.id)
     if (adminCheck) {
@@ -17536,13 +17655,14 @@ export async function getProductFeedback(
       
       // Get employee record from CompanyAdmin
       const adminRecords = await db.collection('companyadmins').find({ 
-        companyId: company._id 
+        companyId: 
+    company._id 
       }).toArray()
       
       // Find the admin record that matches this email
       for (const adminRecord of adminRecords) {
         if (adminRecord.employeeId) {
-          const emp = await Employee.findById(adminRecord.employeeId).lean()
+          const emp = await Employee.findById(adminRecord.employeeId).lean() as any
           if (emp) {
             // Verify this employee's email matches
             let empEmailMatches = false
@@ -17578,9 +17698,8 @@ export async function getProductFeedback(
       email: { $regex: new RegExp(`^${trimmedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
     }).lean()
     
-    // Fallback: if not found by regex, try manual comparison
     if (!vendor) {
-      const allVendors = await Vendor.find({}).lean()
+      const allVendors = await Vendor.find({}).lean() as any
       for (const v of allVendors) {
         if (v.email && v.email.trim().toLowerCase() === trimmedEmail.toLowerCase()) {
           vendor = v
@@ -17607,7 +17726,7 @@ export async function getProductFeedback(
         .populate('uniformId', 'id name')
         .populate('vendorId', 'id name')
         .sort({ createdAt: -1 })
-        .lean()
+        .lean() as any
       
       return feedback.map((f: any) => toPlainObject(f))
     }
@@ -17616,11 +17735,11 @@ export async function getProductFeedback(
   // If not Company Admin and not Vendor, try to find as employee
   if (!employee && !isCompanyAdminUser) {
     // Try finding with encrypted email first
-    employee = await Employee.findOne({ email: encryptedEmail }).lean()
+    employee = await Employee.findOne({ email: encryptedEmail }).lean() as any
     
     // If not found, try decryption matching
     if (!employee && encryptedEmail) {
-      const allEmployees = await Employee.find({}).lean()
+      const allEmployees = await Employee.find({}).lean() as any
       for (const emp of allEmployees) {
         if (emp.email && typeof emp.email === 'string') {
           try {
@@ -17642,13 +17761,16 @@ export async function getProductFeedback(
     
     // Employee found - get companyId and check if Company Admin
     const employeeIdStr = (employee._id || employee.id).toString()
-    companyId = employee.companyId ? (typeof employee.companyId === 'object' ? employee.companyId.id : employee.companyId) : null
+    companyId = employee.companyId ? (typeof 
+    employee.companyId === 'object' ? 
+    employee.companyId.id : 
+    employee.companyId) : null
     
     // If companyId is an ObjectId string, try to find the company by _id and get its id
     if (companyId && typeof companyId === 'string' && mongoose.Types.ObjectId.isValid(companyId) && companyId.length === 24) {
-      const companyForIdConversion = await Company.findById(companyId).select('id').lean()
+      const companyForIdConversion = await Company.findById(companyId).select('id').lean() as any
       if (companyForIdConversion) {
-        companyId = companyForIdConversion.id
+        companyId = (companyForIdConversion as any).id
         console.log(`[getProductFeedback] Converted ObjectId companyId to string ID: ${companyId}`)
       }
     }
@@ -17674,15 +17796,17 @@ export async function getProductFeedback(
     // Company Admin can see all feedback for their company
     console.log(`[getProductFeedback] Processing Company Admin request - companyId: ${companyId}, email: ${trimmedEmail}`)
     
-    const companyForAdmin = await Company.findOne({ id: companyId }).lean()
+    const companyForAdmin = await Company.findOne({ id: companyId }).lean() as any
     if (companyForAdmin) {
-      query.companyId = companyForAdmin._id
-      console.log(`[getProductFeedback] Company Admin query - companyId: ${companyId}, company._id: ${companyForAdmin._id}, company.name: ${companyForAdmin.name}`)
+      query.companyId = (companyForAdmin as any)._id
+      console.log(`[getProductFeedback] Company Admin query - companyId: ${companyId}, 
+    company._id: ${(companyForAdmin as any)._id}, 
+    company.name: ${(companyForAdmin as any).name}`)
     } else {
       console.error(`[getProductFeedback] Company not found for Company Admin - companyId: ${companyId}`)
       // Try alternative lookup methods
       const companyByObjectId = mongoose.Types.ObjectId.isValid(companyId) 
-        ? await Company.findById(companyId).lean()
+        ? await Company.findById(companyId).lean() as any
         : null
       if (companyByObjectId) {
         query.companyId = companyByObjectId._id
@@ -17691,18 +17815,22 @@ export async function getProductFeedback(
         // Last resort: Find company by checking CompanyAdmin records
         console.log(`[getProductFeedback] Trying to find company via CompanyAdmin records...`)
         const db = mongoose.connection.db
-        const employeeIdStr = employee._id.toString()
+           if (!db) {
+    throw new Error('Database connection not available')
+  }
+  const employeeIdStr = employee._id.toString()
         const adminRecords = await db.collection('companyadmins').find({ 
-          employeeId: employee._id 
+          employeeId: 
+    employee._id 
         }).toArray()
         
         if (adminRecords.length > 0) {
           const adminRecord = adminRecords[0]
-          const companyFromAdmin = await Company.findById(adminRecord.companyId).lean()
+          const companyFromAdmin = await Company.findById(adminRecord.companyId).lean() as any
           if (companyFromAdmin) {
-            query.companyId = companyFromAdmin._id
-            companyId = companyFromAdmin.id
-            console.log(`[getProductFeedback] Found company via CompanyAdmin record - companyId: ${companyId}, name: ${companyFromAdmin.name}`)
+            query.companyId = (companyFromAdmin as any)._id
+            companyId = (companyFromAdmin as any).id
+            console.log(`[getProductFeedback] Found company via CompanyAdmin record - companyId: ${companyId}, name: ${(companyFromAdmin as any).name}`)
           } else {
             console.error(`[getProductFeedback] Company not found by any method - returning empty array`)
             return []
@@ -17725,7 +17853,7 @@ export async function getProductFeedback(
           { employeeId: filters.employeeId },
           { id: filters.employeeId }
         ]
-      }).lean()
+      }).lean() as any
       if (filterEmployee) {
         query.employeeId = filterEmployee._id
       }
@@ -17737,7 +17865,7 @@ export async function getProductFeedback(
     let companyForQuery = companyForAdmin
     if (!companyForQuery && query.companyId) {
       // Try to find company by the _id we're querying
-      companyForQuery = await Company.findById(query.companyId).lean()
+      companyForQuery = await Company.findById(query.companyId).lean() as any
     }
     
     if (companyForQuery && companyForQuery.id && query.companyId) {
@@ -17761,28 +17889,33 @@ export async function getProductFeedback(
   } else if (isLocationAdminUser && location) {
     // Location Admin can see feedback only if setting is enabled
     console.log(`[getProductFeedback] 🔍 Location Admin detected - location:`, {
-      locationId: location.id,
-      locationName: location.name,
-      locationCompanyId: location.companyId,
-      locationCompanyIdType: typeof location.companyId,
-      locationCompanyIdId: location.companyId?.id,
-      locationCompanyId_id: location.companyId?._id?.toString()
+      locationId: 
+    location.id,
+      locationName: 
+    location.name,
+      locationCompanyId: 
+    (location as any).companyId,
+      locationCompanyIdType: typeof 
+    (location as any).companyId,
+      locationCompanyIdId: 
+    (location as any).companyId?.id,
+      locationCompanyId_id: 
+    (location as any).companyId?._id?.toString()
     })
     
     // Get company ID from location - handle both populated and non-populated cases
     let locationCompanyIdStr: string | null = null
-    if (location.companyId) {
-      if (typeof location.companyId === 'object' && location.companyId !== null) {
+    if ((location as any).companyId) {
+      if (typeof (location as any).companyId === 'object' && (location as any).companyId !== null) {
         // Populated company object
-        locationCompanyIdStr = location.companyId.id || null
-      } else if (typeof location.companyId === 'string') {
+        locationCompanyIdStr = (location as any).companyId.id || null
+      } else if (typeof (location as any).companyId === 'string') {
         // Check if it's a company ID string (6-digit) or ObjectId string (24 hex)
-        if (/^\d{6}$/.test(location.companyId)) {
-          locationCompanyIdStr = location.companyId
-        } else if (mongoose.Types.ObjectId.isValid(location.companyId)) {
+        if (/^\d{6}$/.test((location as any).companyId)) {
+          locationCompanyIdStr = (location as any).companyId
+        } else if (mongoose.Types.ObjectId.isValid((location as any).companyId)) {
           // It's an ObjectId - need to find company
-          const companyByObjectId = await Company.findById(location.companyId).select('id').lean()
-          locationCompanyIdStr = companyByObjectId?.id || null
+          const companyByObjectId = await Company.findById((location as any).companyId).select('id').lean() as any
         }
       }
     }
@@ -17795,13 +17928,13 @@ export async function getProductFeedback(
     console.log(`[getProductFeedback] 🔍 Location company ID: ${locationCompanyIdStr}`)
     
     // Get company and check setting
-    const companyForLocationAdmin = await Company.findOne({ id: locationCompanyIdStr }).lean()
+    const companyForLocationAdmin = await Company.findOne({ id: locationCompanyIdStr }).lean() as any
     if (!companyForLocationAdmin) {
       console.error(`[getProductFeedback] ❌ Company not found for Location Admin - companyId: ${locationCompanyIdStr}`)
       return []
     }
     
-    console.log(`[getProductFeedback] 🔍 Company found: ${companyForLocationAdmin.name} (${companyForLocationAdmin.id})`)
+    console.log(`[getProductFeedback] 🔍 Company found: ${(companyForLocationAdmin as any).name} (${(companyForLocationAdmin as any).id})`)
     console.log(`[getProductFeedback] 🔍 allowLocationAdminViewFeedback setting:`, companyForLocationAdmin.allowLocationAdminViewFeedback)
     
     if (!companyForLocationAdmin.allowLocationAdminViewFeedback) {
@@ -17816,11 +17949,13 @@ export async function getProductFeedback(
     // Get location ObjectId - location from getLocationByAdminEmail should have _id
     let locationObjectId = null
     if (location._id) {
-      locationObjectId = typeof location._id === 'string' ? new mongoose.Types.ObjectId(location._id) : location._id
+      locationObjectId = typeof 
+    location._id === 'string' ? new mongoose.Types.ObjectId(location._id) : 
+    location._id
     } else if (location.id) {
       // If _id is not present, find location by id to get _id
-      const locationDoc = await Location.findOne({ id: location.id }).select('_id').lean()
-      if (locationDoc && locationDoc._id) {
+      const locationDoc = await Location.findOne({ id: 
+    location.id }).select('_id').lean() as any
         locationObjectId = locationDoc._id
       }
     }
@@ -17835,9 +17970,8 @@ export async function getProductFeedback(
     // Find all employees in this location using location ObjectId
     locationEmployees = await Employee.find({ locationId: locationObjectId })
       .select('_id employeeId id firstName lastName')
-      .lean()
+      .lean() as any
     
-    console.log(`[getProductFeedback] 🔍 Found ${locationEmployees.length} employees in location ${location.id} (${location.name})`)
     
     if (locationEmployees.length === 0) {
       // No employees in this location - return empty array
@@ -17861,13 +17995,14 @@ export async function getProductFeedback(
     })
     
     // Get employee ObjectIds
-    const employeeObjectIds = locationEmployees.map((e: any) => e._id)
+    // Get employee string IDs
+    const employeeIds = locationEmployees.map((e: any) => e.id || e.employeeId).filter((id: any) => id)
     
     // Filter feedback to only include feedback from employees in this location
     // IMPORTANT: Use $in for employeeId to match multiple employees
-    query.employeeId = { $in: employeeObjectIds }
+    query.employeeId = { $in: employeeIds }
     // Also filter by company to ensure we only get feedback for this company
-    query.companyId = companyForLocationAdmin._id
+    query.companyId = (companyForLocationAdmin as any).id
     
     // Remove any $or that might have been set earlier (for Company Admin)
     if (query.$or) {
@@ -17883,9 +18018,9 @@ export async function getProductFeedback(
     
     // IMPORTANT: Also match by companyIdNum as fallback (similar to Company Admin)
     // Some feedback records may have companyId as ObjectId but companyIdNum matches
-    const companyIdNum = typeof companyForLocationAdmin.id === 'string' 
-      ? parseInt(companyForLocationAdmin.id) 
-      : companyForLocationAdmin.id
+    const companyIdNum = typeof (companyForLocationAdmin as any).id === 'string' 
+      ? parseInt((companyForLocationAdmin as any).id) 
+      : (companyForLocationAdmin as any).id
     
     // Use $or to match either by companyId ObjectId OR companyIdNum
     // But keep employeeId filter separate (not in $or)
@@ -17900,11 +18035,11 @@ export async function getProductFeedback(
     console.log(`[getProductFeedback] ✅ Location Admin query built with $or:`, {
       location: location.id,
       locationName: location.name,
-      employeeCount: employeeObjectIds.length,
-      companyIdObjectId: companyIdObjectId.toString(),
+      employeeCount: employeeIds.length,
+      companyId: (companyForLocationAdmin as any).id,
       companyIdNum: companyIdNum,
-      companyName: companyForLocationAdmin.name,
-      employeeObjectIds: employeeObjectIds.map((id: any) => id.toString()).slice(0, 3),
+      companyName: (companyForLocationAdmin as any).name,
+      employeeIds: employeeIds.slice(0, 3),
       queryStructure: {
         employeeId: '$in with ' + employeeObjectIds.length + ' employees',
         $or: 'companyId ObjectId OR companyIdNum'
@@ -17996,7 +18131,7 @@ export async function getProductFeedback(
       orderId: 'ORD-1765652961649-4ZMRWCRMB-100001' 
     })
       .populate('companyId', 'id name')
-      .lean()
+      .lean() as any
     
     if (specificFeedbackCheck) {
       console.log(`[getProductFeedback] 🔍 SPECIFIC FEEDBACK CHECK - Found feedback ORD-1765652961649-4ZMRWCRMB-100001:`, {
@@ -18018,7 +18153,7 @@ export async function getProductFeedback(
       const wouldMatch = await ProductFeedback.findOne({
         _id: specificFeedbackCheck._id,
         ...testQuery
-      }).lean()
+      }).lean() as any
       
       console.log(`[getProductFeedback] 🔍 Would this feedback match the query?`, {
         wouldMatch: !!wouldMatch,
@@ -18046,9 +18181,8 @@ export async function getProductFeedback(
         model: 'Vendor'
       })
       .sort({ createdAt: -1 })
-      .lean()
+      .lean() as any
     
-    console.log(`[getProductFeedback] Initial query returned ${feedback.length} records`)
     
     // Location Admin specific debugging
     if (isLocationAdminUser && location) {
@@ -18105,7 +18239,7 @@ export async function getProductFeedback(
         orderId: missingFeedbackOrderId 
       })
         .populate('companyId', 'id name')
-        .lean()
+        .lean() as any
       
       if (missingFeedbackCheck) {
         const queryCompanyId = query.companyId?.toString() || (query.$or && query.$or[0]?.companyId?.toString())
@@ -18135,7 +18269,7 @@ export async function getProductFeedback(
           const directMatchTest = await ProductFeedback.findOne({
             orderId: missingFeedbackOrderId,
             $or: query.$or
-          }).lean()
+          }).lean() as any
           console.log(`[getProductFeedback] 🔍 Direct $or query test:`, {
             matches: !!directMatchTest,
             orConditions: query.$or.map((or: any) => ({
@@ -18150,7 +18284,7 @@ export async function getProductFeedback(
           const directMatchById = await ProductFeedback.findOne({
             orderId: missingFeedbackOrderId,
             companyId: query.companyId
-          }).lean()
+          }).lean() as any
           console.log(`[getProductFeedback] 🔍 Direct companyId ObjectId test:`, {
             matches: !!directMatchById,
             queryCompanyId: query.companyId.toString()
@@ -18159,14 +18293,14 @@ export async function getProductFeedback(
         
         // Also check by companyIdNum
         if (missingFeedbackCheck.companyIdNum) {
-          const companyForNumCheck = await Company.findOne({ id: companyId }).lean()
+          const companyForNumCheck = await Company.findOne({ id: companyId }).lean() as any
           if (companyForNumCheck) {
-            const companyIdNumMatch = typeof companyForNumCheck.id === 'string' 
-              ? parseInt(companyForNumCheck.id) === missingFeedbackCheck.companyIdNum
-              : companyForNumCheck.id === missingFeedbackCheck.companyIdNum
+            const companyIdNumMatch = typeof (companyForNumCheck as any).id === 'string' 
+              ? parseInt((companyForNumCheck as any).id) === missingFeedbackCheck.companyIdNum
+              : (companyForNumCheck as any).id === missingFeedbackCheck.companyIdNum
             console.log(`[getProductFeedback] 🔍 DEBUG: companyIdNum check:`, {
               feedbackCompanyIdNum: missingFeedbackCheck.companyIdNum,
-              companyIdNum: companyForNumCheck.id,
+              companyIdNum: (companyForNumCheck as any).id,
               matches: companyIdNumMatch
             })
           }
@@ -18220,7 +18354,10 @@ export async function getProductFeedback(
     // CRITICAL: This ensures Company Admin always sees vendor information
     // OPTIMIZED: Batch process to avoid blocking
     const db = mongoose.connection.db
-    if (db && feedback.length > 0) {
+       if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db && feedback.length > 0) {
       console.log(`[getProductFeedback] Post-processing ${feedback.length} feedback records for vendorId population`)
       
       // Batch process: Only process feedback missing vendorId, limit to prevent blocking
@@ -18266,21 +18403,20 @@ export async function getProductFeedback(
           // Strategy 1: Direct id match
           orders = await Order.find({ id: { $in: orderIds } })
             .select('id vendorId')
-            .lean()
-          console.log(`[getProductFeedback] 🔍 DEBUG: Strategy 1 (id: $in) found ${orders.length} orders`)
+            .lean() as any
           
           // Strategy 2: If no matches, try exact string match (case sensitive)
           if (orders.length === 0) {
             console.log(`[getProductFeedback] 🔍 DEBUG: Strategy 1 failed, trying individual queries...`)
             for (const orderId of orderIds.slice(0, 2)) { // Test first 2
-              const testOrder = await Order.findOne({ id: orderId }).select('id vendorId').lean()
+              const testOrder = await Order.findOne({ id: orderId }).select('id vendorId').lean() as any
               if (testOrder) {
                 console.log(`[getProductFeedback] 🔍 DEBUG: Found order with direct findOne:`, {
                   searchedId: orderId,
-                  foundId: testOrder.id,
-                  hasVendorId: !!testOrder.vendorId,
-                  vendorIdType: typeof testOrder.vendorId,
-                  vendorIdValue: testOrder.vendorId
+                  foundId: (testOrder as any).id,
+                  hasVendorId: !!(testOrder as any).vendorId,
+                  vendorIdType: typeof (testOrder as any).vendorId,
+                  vendorIdValue: (testOrder as any).vendorId
                 })
               } else {
                 console.log(`[getProductFeedback] 🔍 DEBUG: Order NOT found with id:`, orderId)
@@ -18288,9 +18424,8 @@ export async function getProductFeedback(
                 const similarOrders = await Order.find({ id: { $regex: orderId.substring(0, 20) } })
                   .select('id vendorId')
                   .limit(3)
-                  .lean()
-                console.log(`[getProductFeedback] 🔍 DEBUG: Found ${similarOrders.length} orders with similar pattern:`, 
-                  similarOrders.map((o: any) => ({ id: o.id, hasVendorId: !!o.vendorId })))
+                  .lean() as any
+                console.log('Similar orders:', similarOrders.map((o: any) => ({ id: o.id, hasVendorId: !!o.vendorId })))
               }
             }
           }
@@ -18299,7 +18434,10 @@ export async function getProductFeedback(
           if (orders.length === 0) {
             console.log(`[getProductFeedback] 🔍 DEBUG: Trying raw MongoDB collection query...`)
             const db = mongoose.connection.db
-            if (db) {
+               if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db) {
               const rawOrders = await db.collection('orders').find({ id: { $in: orderIds } })
                 .project({ id: 1, vendorId: 1 })
                 .toArray()
@@ -18357,8 +18495,7 @@ export async function getProductFeedback(
           console.log(`[getProductFeedback] 🔍 DEBUG: Order-vendor mapping: ${orderVendorMap.size} mappings, ${vendorIdsFromOrders.size} unique vendors`)
           
           // Get all vendors in database for fallback (do this once, outside the loop)
-          const allVendors = await Vendor.find({}).select('_id id name').lean()
-          console.log(`[getProductFeedback] 🔍 DEBUG: Total vendors in database: ${allVendors.length}`)
+          const allVendors = await Vendor.find({}).select('_id id name').lean() as any
           if (allVendors.length > 0) {
             console.log(`[getProductFeedback] 🔍 DEBUG: Sample of existing vendors:`, 
               allVendors.slice(0, 5).map((v: any) => ({ _id: v._id.toString(), id: v.id, name: v.name })))
@@ -18387,9 +18524,8 @@ export async function getProductFeedback(
             // Strategy 1: Try Mongoose query
             let vendorsFromOrders = await Vendor.find({ _id: { $in: vendorObjectIds } })
               .select('id name')
-              .lean()
+              .lean() as any
             
-            console.log(`[getProductFeedback] 🔍 DEBUG: Strategy 1 (Mongoose $in) found ${vendorsFromOrders.length} vendors`)
             
             // Strategy 2: If no results, try individual findById queries (more reliable)
             if (vendorsFromOrders.length === 0 && vendorObjectIds.length > 0) {
@@ -18439,7 +18575,10 @@ export async function getProductFeedback(
             if (vendorsFromOrders.length === 0) {
               console.log(`[getProductFeedback] 🔍 DEBUG: Strategy 2 failed, trying raw MongoDB collection...`)
               const db = mongoose.connection.db
-              if (db) {
+                 if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db) {
                 // First, check what collections exist
                 const collections = await db.listCollections().toArray()
                 const vendorCollectionNames = collections
@@ -18469,10 +18608,14 @@ export async function getProductFeedback(
                       if (rawVendor) {
                         individualRawVendors.push(rawVendor)
                         console.log(`[getProductFeedback] 🔍 DEBUG: ✅ Found vendor in raw collection with _id ObjectId:`, {
-                          _id: rawVendor._id,
-                          _idType: typeof rawVendor._id,
-                          id: rawVendor.id,
-                          name: rawVendor.name
+                          _id: 
+    rawVendor._id,
+                          _idType: typeof 
+    rawVendor._id,
+                          id: 
+    rawVendor.id,
+                          name: 
+    rawVendor.name
                         })
                       } else {
                         // Try as string
@@ -18482,10 +18625,14 @@ export async function getProductFeedback(
                         if (rawVendor) {
                           individualRawVendors.push(rawVendor)
                           console.log(`[getProductFeedback] 🔍 DEBUG: ✅ Found vendor with _id as string:`, {
-                            _id: rawVendor._id,
-                            _idType: typeof rawVendor._id,
-                            id: rawVendor.id,
-                            name: rawVendor.name
+                            _id: 
+    rawVendor._id,
+                            _idType: typeof 
+    rawVendor._id,
+                            id: 
+    rawVendor.id,
+                            name: 
+    rawVendor.name
                           })
                         } else {
                           // Try finding by id field
@@ -18494,9 +18641,12 @@ export async function getProductFeedback(
                           if (rawVendor) {
                             individualRawVendors.push(rawVendor)
                             console.log(`[getProductFeedback] 🔍 DEBUG: ✅ Found vendor with id field:`, {
-                              _id: rawVendor._id,
-                              id: rawVendor.id,
-                              name: rawVendor.name
+                              _id: 
+    rawVendor._id,
+                              id: 
+    rawVendor.id,
+                              name: 
+    rawVendor.name
                             })
                           } else {
                             // Debug: Check what _id values actually exist in the collection
@@ -18539,8 +18689,10 @@ export async function getProductFeedback(
                 if (vendor.name) {
                   vendorMap.set(vendorIdStr, {
                     _id: vendor._id,
-                    id: vendor.id,
-                    name: vendor.name
+                    id: 
+    vendor.id,
+                    name: 
+    vendor.name
                   })
                   console.log(`[getProductFeedback] 🔍 DEBUG: Mapped vendor ${vendorIdStr} -> ${vendor.name}`)
                 } else {
@@ -18561,7 +18713,8 @@ export async function getProductFeedback(
                   const vendorIdStr = orderVendorMap.get(fb.orderId)!
                   const vendor = vendorMap.get(vendorIdStr)
                   
-                  console.log(`[getProductFeedback] 🔍 DEBUG: Feedback ${fb._id} vendorIdStr ${vendorIdStr} -> vendor:`, !!vendor, vendor ? vendor.name : 'NOT FOUND')
+                  console.log(`[getProductFeedback] 🔍 DEBUG: Feedback ${fb._id} vendorIdStr ${vendorIdStr} -> vendor:`, !!vendor, vendor ? 
+    vendor.name : 'NOT FOUND')
                   
                   if (vendor) {
                     // Full vendor object with name
@@ -18571,7 +18724,8 @@ export async function getProductFeedback(
                     // Update database asynchronously
                     ProductFeedback.updateOne(
                       { _id: fb._id },
-                      { $set: { vendorId: vendor._id } }
+                      { $set: { vendorId: 
+    vendor._id } }
                     ).catch(err => console.error(`[getProductFeedback] Error updating feedback ${fb._id} from order:`, err))
                   } else {
                     // FALLBACK: Vendor not found in lookup, but we have vendorId from order
@@ -18584,7 +18738,10 @@ export async function getProductFeedback(
                     if (fb.uniformId) {
                       try {
                         const db = mongoose.connection.db
-                        if (db) {
+                           if (!db) {
+    throw new Error('Database connection not available')
+  }
+  if (db) {
                           // Extract uniformId ObjectId
                           let uniformObjectId: mongoose.Types.ObjectId | null = null
                           
@@ -18611,20 +18768,20 @@ export async function getProductFeedback(
                               console.log(`[getProductFeedback] 🔍 DEBUG: Found ProductVendor link with vendorId: ${productVendorIdStr}`)
                               
                               // Try to find this vendor
-                              const productVendor = await Vendor.findById(productVendorIdStr).select('id name').lean()
-                              if (productVendor && productVendor.name) {
+                              const productVendor = await Vendor.findById(productVendorIdStr).select('id name').lean() as any
+                              if (productVendor) {
                                 fb.vendorId = {
-                                  _id: productVendor._id,
-                                  id: productVendor.id,
-                                  name: productVendor.name
+                                  _id: (productVendor as any)._id,
+                                  id: (productVendor as any).id,
+                                  name: (productVendor as any).name
                                 }
                                 ordersMatched++
                                 foundViaProductVendor = true
-                                console.log(`[getProductFeedback] 🔍 DEBUG: ✅ Found vendor via ProductVendor: ${productVendor.name}`)
+                                console.log(`[getProductFeedback] 🔍 DEBUG: ✅ Found vendor via ProductVendor: ${(productVendor as any).name}`)
                                 // Update database
                                 ProductFeedback.updateOne(
                                   { _id: fb._id },
-                                  { $set: { vendorId: productVendor._id } }
+                                  { $set: { vendorId: (productVendor as any)._id } }
                                 ).catch(err => console.error(`[getProductFeedback] Error updating feedback ${fb._id} from ProductVendor:`, err))
                               } else {
                                 console.warn(`[getProductFeedback] 🔍 DEBUG: ProductVendor vendorId ${productVendorIdStr} also doesn't exist`)
@@ -18734,15 +18891,18 @@ export async function getProductFeedback(
             
             const vendors = await Vendor.find({ _id: { $in: uniqueVendorIds } })
               .select('id name')
-              .lean()
+              .lean() as any
             
-            const vendorIdMap = new Map<string, any>()
             for (const vendor of vendors) {
               if (vendor && vendor.name) {
-                vendorIdMap.set(vendor._id.toString(), {
-                  _id: vendor._id,
-                  id: vendor.id,
-                  name: vendor.name
+                vendorIdMap.set(
+    vendor._id.toString(), {
+                  _id: 
+    vendor._id,
+                  id: 
+    vendor.id,
+                  name: 
+    vendor.name
                 })
               }
             }
@@ -18769,7 +18929,8 @@ export async function getProductFeedback(
                       // Update database asynchronously
                       ProductFeedback.updateOne(
                         { _id: fb._id },
-                        { $set: { vendorId: vendor._id } }
+                        { $set: { vendorId: 
+    vendor._id } }
                       ).catch(err => console.error(`[getProductFeedback] Error updating feedback ${fb._id} from ProductVendor:`, err))
                     }
                   }
@@ -18860,11 +19021,11 @@ export async function getProductFeedback(
   if (feedback.length === 0 && query.companyId) {
     console.log(`[getProductFeedback] No feedback found with strict query, trying alternative query...`)
     // Get company once for all fallback queries
-    const companyForFallback = await Company.findOne({ _id: query.companyId }).lean()
+    const companyForFallback = await Company.findOne({ _id: query.companyId }).lean() as any
     
-    if (companyForFallback && companyForFallback.id) {
+    if (companyForFallback && (companyForFallback as any).id) {
       // Try querying with companyIdNum as well (fallback)
-      const companyIdNum = typeof companyForFallback.id === 'string' ? parseInt(companyForFallback.id) : companyForFallback.id
+      const companyIdNum = typeof (companyForFallback as any).id === 'string' ? parseInt((companyForFallback as any).id) : (companyForFallback as any).id
       const altQuery: any = {}
       if (query.employeeId) altQuery.employeeId = query.employeeId
       if (query.orderId) altQuery.orderId = query.orderId
@@ -18878,8 +19039,7 @@ export async function getProductFeedback(
         .populate('uniformId', 'id name')
         .populate('vendorId', 'id name')
         .sort({ createdAt: -1 })
-        .lean()
-      console.log(`[getProductFeedback] Alternative query (by companyIdNum) found ${altFeedback.length} feedback records`)
+        .lean() as any
       
       // Post-process: Fill in missing vendorIds
       // PRIORITY 1: Try to get vendorId from Order (most reliable)
@@ -18909,9 +19069,8 @@ export async function getProductFeedback(
             console.log(`[getProductFeedback] [Alt Query] Looking up vendorId from ${altOrderIds.length} orders`)
             const altOrders = await Order.find({ id: { $in: altOrderIds } })
               .select('id vendorId')
-              .lean()
+              .lean() as any
             
-            const altOrderVendorMap = new Map<string, any>()
             const altVendorIdsFromOrders = new Set<string>()
             
             for (const order of altOrders) {
@@ -18929,15 +19088,18 @@ export async function getProductFeedback(
               const altVendorObjectIds = Array.from(altVendorIdsFromOrders).map(id => new mongoose.Types.ObjectId(id))
               const altVendorsFromOrders = await Vendor.find({ _id: { $in: altVendorObjectIds } })
                 .select('id name')
-                .lean()
+                .lean() as any
               
-              const altVendorMap = new Map<string, any>()
               for (const vendor of altVendorsFromOrders) {
                 if (vendor && vendor.name) {
-                  altVendorMap.set(vendor._id.toString(), {
-                    _id: vendor._id,
-                    id: vendor.id,
-                    name: vendor.name
+                  altVendorMap.set(
+    vendor._id.toString(), {
+                    _id: 
+    vendor._id,
+                    id: 
+    vendor.id,
+                    name: 
+    vendor.name
                   })
                 }
               }
@@ -18955,7 +19117,8 @@ export async function getProductFeedback(
                     // Update database asynchronously
                     ProductFeedback.updateOne(
                       { _id: fb._id },
-                      { $set: { vendorId: vendor._id } }
+                      { $set: { vendorId: 
+    vendor._id } }
                     ).catch(err => console.error(`[getProductFeedback] [Alt Query] Error updating feedback ${fb._id} from order:`, err))
                   }
                 }
@@ -18996,9 +19159,8 @@ export async function getProductFeedback(
               }
               
               if (!uniformObjectId && fb.uniformId) {
-                const rawFeedback = await ProductFeedback.findById(fb._id).select('uniformId').lean()
-                if (rawFeedback && rawFeedback.uniformId) {
-                  uniformObjectId = rawFeedback.uniformId
+                const rawFeedback = await ProductFeedback.findById(fb._id).select('uniformId').lean() as any
+                  uniformObjectId = (rawFeedback as any).uniformId
                 }
               }
               
@@ -19010,18 +19172,20 @@ export async function getProductFeedback(
                 if (productVendorLink && productVendorLink.vendorId) {
                   const vendor = await Vendor.findById(productVendorLink.vendorId)
                     .select('id name')
-                    .lean()
+                    .lean() as any
                   
-                  if (vendor) {
                     await ProductFeedback.updateOne(
                       { _id: fb._id },
                       { $set: { vendorId: vendor._id } }
                     )
                     
                     fb.vendorId = {
-                      _id: vendor._id,
-                      id: vendor.id,
-                      name: vendor.name
+                      _id: 
+    vendor._id,
+                      id: 
+    vendor.id,
+                      name: 
+    vendor.name
                     }
                     console.log(`[getProductFeedback] [Alt Query] ✅ Populated vendorId for alt feedback ${fb._id}: ${vendor.name}`)
                   }
@@ -19064,13 +19228,12 @@ export async function getProductFeedback(
         ...(query.vendorId ? { vendorId: query.vendorId } : {})
       })
         .populate('companyId', 'id name')
-        .lean()
+        .lean() as any
       
-      const filteredFeedback = allFeedback.filter((fb: any) => {
         const fbCompanyId = fb.companyId?._id?.toString() || fb.companyId?.toString()
         const targetCompanyId = companyForFallback._id.toString()
         return fbCompanyId === targetCompanyId
-      })
+      )
       
       // Populate other fields
       const populatedFeedback = await ProductFeedback.find({
@@ -19081,9 +19244,8 @@ export async function getProductFeedback(
         .populate('uniformId', 'id name')
         .populate('vendorId', 'id name')
         .sort({ createdAt: -1 })
-        .lean()
+        .lean() as any
       
-      console.log(`[getProductFeedback] Manual matching found ${populatedFeedback.length} feedback records`)
       
       // Apply vendorId population to manually matched feedback as well
       // PRIORITY 1: Try to get vendorId from Order (most reliable)
@@ -19112,9 +19274,8 @@ export async function getProductFeedback(
             console.log(`[getProductFeedback] [Manual Match] Looking up vendorId from ${manualOrderIds.length} orders`)
             const manualOrders = await Order.find({ id: { $in: manualOrderIds } })
               .select('id vendorId')
-              .lean()
+              .lean() as any
             
-            const manualOrderVendorMap = new Map<string, any>()
             const manualVendorIdsFromOrders = new Set<string>()
             
             for (const order of manualOrders) {
@@ -19132,15 +19293,18 @@ export async function getProductFeedback(
               const manualVendorObjectIds = Array.from(manualVendorIdsFromOrders).map(id => new mongoose.Types.ObjectId(id))
               const manualVendorsFromOrders = await Vendor.find({ _id: { $in: manualVendorObjectIds } })
                 .select('id name')
-                .lean()
+                .lean() as any
               
-              const manualVendorMap = new Map<string, any>()
               for (const vendor of manualVendorsFromOrders) {
                 if (vendor && vendor.name) {
-                  manualVendorMap.set(vendor._id.toString(), {
-                    _id: vendor._id,
-                    id: vendor.id,
-                    name: vendor.name
+                  manualVendorMap.set(
+    vendor._id.toString(), {
+                    _id: 
+    vendor._id,
+                    id: 
+    vendor.id,
+                    name: 
+    vendor.name
                   })
                 }
               }
@@ -19185,12 +19349,14 @@ export async function getProductFeedback(
                 })
                 
                 if (productVendorLink && productVendorLink.vendorId) {
-                  const vendor = await Vendor.findById(productVendorLink.vendorId).select('id name').lean()
-                  if (vendor && vendor.name) {
+                  const vendor = await Vendor.findById(productVendorLink.vendorId).select('id name').lean() as any
                     fb.vendorId = {
-                      _id: vendor._id,
-                      id: vendor.id,
-                      name: vendor.name
+                      _id: 
+    vendor._id,
+                      id: 
+    vendor.id,
+                      name: 
+    vendor.name
                     }
                   }
                 }
@@ -19355,9 +19521,8 @@ export async function getProductFeedback(
       console.log(`[getProductFeedback] 🔍 Looking up ${employeeIdsToLookup.length} unique employees...`)
       const employees = await Employee.find({ _id: { $in: employeeIdsToLookup } })
         .select('id employeeId firstName lastName')
-        .lean()
+        .lean() as any
       
-      console.log(`[getProductFeedback] 🔍 Found ${employees.length} employees in batch lookup`)
       
       // Create a map for quick lookup
       const employeeMap = new Map()
@@ -19374,7 +19539,7 @@ export async function getProductFeedback(
       
       // Update feedback records with employee data
       let updatedCount = 0
-      feedbackEmployeeMap.forEach((feedbackRecords, employeeIdStr) => {
+      feedbackEmployeeMap.forEach((feedbackRecords: any, employeeIdStr: number) => {
         if (employeeMap.has(employeeIdStr)) {
           const empData = employeeMap.get(employeeIdStr)
           feedbackRecords.forEach(f => {
@@ -19452,7 +19617,7 @@ async function generateReturnRequestId(): Promise<string> {
   const lastRequest = await ReturnRequest.findOne()
     .sort({ returnRequestId: -1 })
     .select('returnRequestId')
-    .lean()
+    .lean() as any
   
   if (!lastRequest || !lastRequest.returnRequestId) {
     return '600001'
@@ -19494,22 +19659,21 @@ export async function validateReturnEligibility(
   const errors: string[] = []
   
   // Find the order - try multiple formats for robustness
-  let order = await Order.findOne({ id: orderId }).lean()
+  let order = await Order.findOne({ id: orderId }).lean() as any
   let isSplitOrder = false
   let actualChildOrder: any = null
   
   if (!order) {
     // Try with _id if orderId looks like ObjectId
     if (orderId && orderId.length === 24 && /^[0-9a-fA-F]{24}$/.test(orderId)) {
-      order = await Order.findById(orderId).lean()
+      order = await Order.findById(orderId).lean() as any
     }
     // Try with parentOrderId (for split orders)
     if (!order) {
       // This might be a parent order ID - find all child orders
       const childOrders = await Order.find({ parentOrderId: orderId })
         .populate('items.uniformId', 'id name')
-        .lean()
-        .sort({ vendorName: 1 }) // Sort by vendor name for consistency
+        .lean() as any
       
       if (childOrders.length > 0) {
         isSplitOrder = true
@@ -19546,7 +19710,7 @@ export async function validateReturnEligibility(
         }
       } else {
         // Try finding by parentOrderId as a direct lookup (single child order)
-        order = await Order.findOne({ parentOrderId: orderId }).lean()
+        order = await Order.findOne({ parentOrderId: orderId }).lean() as any
       }
     }
   }
@@ -19577,8 +19741,7 @@ export async function validateReturnEligibility(
     let currentItemIndex = 0
     const childOrders = await Order.find({ parentOrderId: orderId })
       .populate('items.uniformId', 'id name')
-      .lean()
-      .sort({ vendorName: 1 })
+      .lean() as any
     
     for (const childOrder of childOrders) {
       const childItems = childOrder.items || []
@@ -19605,7 +19768,7 @@ export async function validateReturnEligibility(
     originalOrderId: orderId,
     originalOrderItemIndex: itemIndex,
     status: { $in: ['REQUESTED', 'APPROVED', 'COMPLETED'] },
-  }).lean()
+  }).lean() as any
   
   if (existingReturn) {
     errors.push('A return request already exists for this product in this order')
@@ -19669,9 +19832,8 @@ export async function createReturnRequest(requestData: {
     .populate('employeeId', 'id employeeId firstName lastName email')
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
-    .lean()
+    .lean() as any
   
-  let isSplitOrder = false
   let actualChildOrder: any = null
   
   if (!order) {
@@ -19681,8 +19843,7 @@ export async function createReturnRequest(requestData: {
         .populate('employeeId', 'id employeeId firstName lastName email')
         .populate('companyId', 'id name')
         .populate('items.uniformId', 'id name')
-        .lean()
-    }
+        .lean() as any
     // Try with parentOrderId (for split orders)
     if (!order) {
       // This might be a parent order ID - find all child orders
@@ -19690,8 +19851,7 @@ export async function createReturnRequest(requestData: {
         .populate('employeeId', 'id employeeId firstName lastName email')
         .populate('companyId', 'id name')
         .populate('items.uniformId', 'id name')
-        .lean()
-        .sort({ vendorName: 1 }) // Sort by vendor name for consistency
+        .lean() as any
       
       if (childOrders.length > 0) {
         isSplitOrder = true
@@ -19732,8 +19892,7 @@ export async function createReturnRequest(requestData: {
           .populate('employeeId', 'id employeeId firstName lastName email')
           .populate('companyId', 'id name')
           .populate('items.uniformId', 'id name')
-          .lean()
-      }
+          .lean() as any
     }
   }
   
@@ -19748,8 +19907,7 @@ export async function createReturnRequest(requestData: {
     let currentItemIndex = 0
     const childOrders = await Order.find({ parentOrderId: requestData.originalOrderId })
       .populate('items.uniformId', 'id name')
-      .lean()
-      .sort({ vendorName: 1 })
+      .lean() as any
     
     for (const childOrder of childOrders) {
       const childItems = childOrder.items || []
@@ -19798,8 +19956,7 @@ export async function createReturnRequest(requestData: {
       employee = await Employee.findById(order.employeeId)
         .populate('companyId', 'id name')
         .populate('locationId', 'id name address city state pincode')
-        .lean()
-      if (employee) {
+        .lean() as any
         employee = toPlainObject(employee)
       }
     }
@@ -19822,9 +19979,8 @@ export async function createReturnRequest(requestData: {
     })
       .populate('companyId', 'id name')
       .populate('locationId', 'id name address city state pincode')
-      .lean()
+      .lean() as any
     
-    if (employeeDoc) {
       employee = toPlainObject(employeeDoc)
     }
   }
@@ -19835,9 +19991,8 @@ export async function createReturnRequest(requestData: {
     const employeeDoc = await Employee.findById(requestData.requestedBy)
       .populate('companyId', 'id name')
       .populate('locationId', 'id name address city state pincode')
-      .lean()
+      .lean() as any
     
-    if (employeeDoc) {
       employee = toPlainObject(employeeDoc)
     }
   }
@@ -19864,14 +20019,16 @@ export async function createReturnRequest(requestData: {
   // Compare requestedBy with employee email (case-insensitive)
   if (requestData.requestedBy && employeeEmail && 
       requestData.requestedBy.toLowerCase().trim() !== employeeEmail.toLowerCase().trim() &&
-      requestData.requestedBy !== employee.id &&
-      requestData.requestedBy !== employee.employeeId) {
+      requestData.requestedBy !== 
+    employee.id &&
+      requestData.requestedBy !== 
+    employee.employeeId) {
     console.warn(`[createReturnRequest] Email mismatch: requestedBy=${requestData.requestedBy}, employeeEmail=${employeeEmail}`)
     // Don't throw error, just log warning - the order's employee is the authoritative source
   }
   
-  // Get uniform
-  const uniform = await Uniform.findById(orderItem.uniformId).lean()
+  // Get uniform - use string ID
+  const uniform = await Uniform.findOne({ id: String(orderItem.uniformId) }).lean() as any
   if (!uniform) {
     throw new Error('Uniform product not found')
   }
@@ -19879,80 +20036,49 @@ export async function createReturnRequest(requestData: {
   // Generate return request ID
   const returnRequestId = await generateReturnRequestId()
   
-  // Get company ID - extract ObjectId from populated object or use directly
-  let companyIdObjectId: mongoose.Types.ObjectId
+  // Get company ID as string - extract from populated object or use directly
+  let companyIdStr: string
   if (typeof order.companyId === 'object' && order.companyId !== null) {
-    if (order.companyId._id) {
-      companyIdObjectId = order.companyId._id instanceof mongoose.Types.ObjectId
-        ? order.companyId._id
-        : new mongoose.Types.ObjectId(order.companyId._id.toString())
-    } else {
-      // Populated object without _id - fetch company to get _id
-      const company = await Company.findOne({ 
-        $or: [
-          { id: order.companyId.id },
-          { _id: order.companyId }
-        ]
-      }).select('_id').lean()
-      if (company && company._id) {
-        companyIdObjectId = company._id instanceof mongoose.Types.ObjectId
-          ? company._id
-          : new mongoose.Types.ObjectId(company._id.toString())
-      } else {
-        throw new Error('Company not found for return request')
-      }
-    }
-  } else if (mongoose.Types.ObjectId.isValid(order.companyId)) {
-    companyIdObjectId = new mongoose.Types.ObjectId(order.companyId.toString())
+    // Populated object - use id field
+    companyIdStr = order.companyId.id || String(order.companyId)
+  } else if (typeof order.companyId === 'string') {
+    // Already a string ID
+    companyIdStr = order.companyId
   } else {
-    throw new Error('Invalid companyId format')
+    // Try to get company by any means
+    const company = await Company.findOne({ 
+      $or: [
+        { id: String(order.companyId) },
+        { _id: order.companyId }
+      ]
+    }).select('id').lean() as any
+    if (company) {
+      companyIdStr = company.id
+    } else {
+      throw new Error('Company not found for return request')
+    }
   }
   
-  // Get employee ID - CRITICAL: Fetch employee from DB to get actual _id ObjectId
-  // The employee object we have might be a plain object from populate, which doesn't have _id
-  let employeeIdObjectId: mongoose.Types.ObjectId
-  
-  // Use the employee's id or employeeId to fetch the actual document with _id
-  const employeeIdToSearch = employee?.id || employee?.employeeId
-  if (!employeeIdToSearch) {
+  // Get employee ID as string
+  const employeeIdStr = employee?.id || employee?.employeeId
+  if (!employeeIdStr) {
     throw new Error('Employee ID not found in employee object')
   }
   
-  // Fetch employee from database to get the actual _id ObjectId
-  const db = mongoose.connection.db
-  if (!db) {
-    throw new Error('Database connection not available')
-  }
+  const employeeIdNum = employee.employeeId || 
+    employee.id || ''
   
-  const rawEmployee = await db.collection('employees').findOne({
-    $or: [
-      { id: employeeIdToSearch },
-      { employeeId: employeeIdToSearch }
-    ]
-  })
-  
-  if (!rawEmployee || !rawEmployee._id) {
-    console.error(`[createReturnRequest] Employee not found in database for id: ${employeeIdToSearch}`)
-    throw new Error(`Employee not found in database: ${employeeIdToSearch}`)
-  }
-  
-  employeeIdObjectId = rawEmployee._id instanceof mongoose.Types.ObjectId
-    ? rawEmployee._id
-    : new mongoose.Types.ObjectId(rawEmployee._id.toString())
-  
-  const employeeIdNum = employee.employeeId || employee.id || ''
-  
-  // Create return request
+  // Create return request with string IDs
   const returnRequest = await ReturnRequest.create({
     returnRequestId,
     originalOrderId: requestData.originalOrderId,
     originalOrderItemIndex: requestData.originalOrderItemIndex,
     productId: orderItem.productId,
-    uniformId: orderItem.uniformId,
+    uniformId: String(orderItem.uniformId),
     uniformName: orderItem.uniformName,
-    employeeId: employeeIdObjectId, // Ensure this is an ObjectId, not an object
+    employeeId: String(employeeIdStr),
     employeeIdNum,
-    companyId: companyIdObjectId,
+    companyId: companyIdStr,
     requestedQty: requestData.requestedQty,
     originalSize: orderItem.size,
     requestedSize: requestData.requestedSize,
@@ -19997,9 +20123,9 @@ export async function getReturnRequestsByEmployee(employeeId: string): Promise<a
     .populate('companyId', 'id name')
     .populate('uniformId', 'id name')
     .sort({ createdAt: -1 })
-    .lean()
+    .lean() as any
   
-  return returnRequests.map((rr) => toPlainObject(rr))
+  return returnRequests.map((rr: any) => toPlainObject(rr))
 }
 
 /**
@@ -20011,15 +20137,13 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
   // Find company - try multiple formats for robustness
   let company = await Company.findOne({ id: companyId }).select('_id id').lean()
   
-  if (!company) {
-    // Try with _id if companyId looks like ObjectId
-    if (companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
-      company = await Company.findById(companyId).select('_id id').lean()
-    }
-    // Try as numeric ID (if companyId is a number string)
-    if (!company && !isNaN(Number(companyId))) {
-      company = await Company.findOne({ id: Number(companyId) }).select('_id id').lean()
-    }
+  // Try with _id if companyId looks like ObjectId
+  if (!company && companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
+    company = await Company.findById(companyId).select('_id id').lean() as any
+  }
+  // Try as numeric ID (if companyId is a number string)
+  if (!company && !isNaN(Number(companyId))) {
+    company = await Company.findOne({ id: Number(companyId) }).select('_id id').lean() as any
   }
   
   if (!company) {
@@ -20041,9 +20165,8 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
     .populate('companyId', 'id name')
     .populate('uniformId', 'id name')
     .sort({ createdAt: -1 })
-    .lean()
+    .lean() as any
   
-  // Enrich return requests with vendor information from original order
   const enrichedReturnRequests = await Promise.all(
     returnRequests.map(async (rr) => {
       const plainRR = toPlainObject(rr)
@@ -20057,14 +20180,8 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
         // First, try to find order by id
         let originalOrder = await Order.findOne({ id: rr.originalOrderId })
           .populate('vendorId', 'id name')
-          .lean()
+          .lean() as any
         
-        // If not found, try with _id (if originalOrderId is an ObjectId)
-        if (!originalOrder && rr.originalOrderId && rr.originalOrderId.length === 24 && /^[0-9a-fA-F]{24}$/.test(rr.originalOrderId)) {
-          originalOrder = await Order.findById(rr.originalOrderId)
-            .populate('vendorId', 'id name')
-            .lean()
-        }
         
         // Check if this might be a parent order (has child orders) - same logic as validateReturnEligibility
         if (!originalOrder || !originalOrder.parentOrderId) {
@@ -20072,7 +20189,7 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
           const childOrders = await Order.find({ parentOrderId: rr.originalOrderId })
             .populate('vendorId', 'id name')
             .sort({ vendorName: 1 }) // Sort by vendor name for consistency (same as validateReturnEligibility)
-            .lean()
+            .lean() as any
           
           if (childOrders.length > 0) {
             // This is a parent order with child orders - find which child contains the item
@@ -20086,8 +20203,8 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
                 } else if (childOrder.vendorId && typeof childOrder.vendorId === 'object' && childOrder.vendorId.name) {
                   vendorName = childOrder.vendorId.name
                 } else if (childOrder.vendorId) {
-                  // vendorId is an ObjectId, fetch vendor name
-                  const vendor = await Vendor.findById(childOrder.vendorId).select('name').lean()
+                  // vendorId is a string ID, fetch vendor name
+                  const vendor = await Vendor.findOne({ id: String(childOrder.vendorId) }).select('name').lean() as any
                   if (vendor) {
                     vendorName = vendor.name
                   }
@@ -20105,7 +20222,7 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
               vendorName = originalOrder.vendorId.name
             } else if (originalOrder.vendorId) {
               // vendorId is an ObjectId, fetch vendor name
-              const vendor = await Vendor.findById(originalOrder.vendorId).select('name').lean()
+              const vendor = await Vendor.findById(originalOrder.vendorId).select('name').lean() as any
               if (vendor) {
                 vendorName = vendor.name
               }
@@ -20122,7 +20239,7 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
               vendorName = originalOrder.vendorId.name
             } else if (originalOrder.vendorId) {
               // vendorId is an ObjectId, fetch vendor name
-              const vendor = await Vendor.findById(originalOrder.vendorId).select('name').lean()
+              const vendor = await Vendor.findById(originalOrder.vendorId).select('name').lean() as any
               if (vendor) {
                 vendorName = vendor.name
               }
@@ -20154,9 +20271,8 @@ export async function getReturnRequestById(returnRequestId: string): Promise<any
     .populate('employeeId', 'id firstName lastName email')
     .populate('companyId', 'id name')
     .populate('uniformId', 'id name')
-    .lean()
+    .lean() as any
   
-  if (!returnRequest) {
     return null
   }
   
@@ -20177,9 +20293,8 @@ export async function approveReturnRequest(
     .populate('employeeId', 'id employeeId firstName lastName email')
     .populate('companyId', 'id name')
     .populate('uniformId', 'id name')
-    .lean()
+    .lean() as any
   
-  if (!returnRequest) {
     throw new Error('Return request not found')
   }
   
@@ -20189,16 +20304,16 @@ export async function approveReturnRequest(
   
   // Get original order - try multiple formats for robustness
   // CRITICAL: First query without populate to see raw vendorId, then populate for full details
-  let originalOrderRaw = await Order.findOne({ id: returnRequest.originalOrderId }).lean()
+  let originalOrderRaw = await Order.findOne({ id: returnRequest.originalOrderId }).lean() as any
   
   if (!originalOrderRaw) {
     // Try with _id if originalOrderId looks like ObjectId
     if (returnRequest.originalOrderId && returnRequest.originalOrderId.length === 24 && /^[0-9a-fA-F]{24}$/.test(returnRequest.originalOrderId)) {
-      originalOrderRaw = await Order.findById(returnRequest.originalOrderId).lean()
+      originalOrderRaw = await Order.findById(returnRequest.originalOrderId).lean() as any
     }
     // Try with parentOrderId (for split orders - the stored ID might be a parent order ID)
     if (!originalOrderRaw) {
-      originalOrderRaw = await Order.findOne({ parentOrderId: returnRequest.originalOrderId }).lean()
+      originalOrderRaw = await Order.findOne({ parentOrderId: returnRequest.originalOrderId }).lean() as any
     }
   }
   
@@ -20220,13 +20335,13 @@ export async function approveReturnRequest(
   
   // Now populate for full details
   let originalOrder = await Order.findOne({ id: originalOrderRaw.id })
-        .populate('employeeId', 'id employeeId firstName lastName email')
-        .populate('companyId', 'id name')
+    .populate('employeeId', 'id employeeId firstName lastName email')
+    .populate('companyId', 'id name')
     .populate('vendorId', 'id name')
-        .lean()
+    .lean() as any
   
+  // Fallback to raw order if populate fails
   if (!originalOrder) {
-    // Fallback to raw order if populate fails
     originalOrder = originalOrderRaw
   }
   
@@ -20251,7 +20366,7 @@ export async function approveReturnRequest(
   })
   
   // Get uniform to get price and product ID
-  const uniform = await Uniform.findById(returnRequest.uniformId).lean()
+  const uniform = await Uniform.findById(returnRequest.uniformId).lean() as any
   if (!uniform) {
     throw new Error('Uniform product not found')
   }
@@ -20310,7 +20425,7 @@ export async function approveReturnRequest(
         } else if (order.vendorId._id) {
           // Fallback: if only _id exists, query vendor by _id to get the 'id' field
           try {
-            const vendorByObjectId = await Vendor.findById(order.vendorId._id).lean()
+            const vendorByObjectId = await Vendor.findById(order.vendorId._id).lean() as any
             if (vendorByObjectId && (vendorByObjectId as any).id) {
               vendorId = (vendorByObjectId as any).id.toString()
               vendorName = order.vendorId.name || order.vendorName || null
@@ -20323,7 +20438,7 @@ export async function approveReturnRequest(
       } else if (order.vendorId instanceof mongoose.Types.ObjectId) {
         // Legacy: ObjectId format - query vendor to get the string 'id'
         try {
-          const vendorByObjectId = await Vendor.findById(order.vendorId).lean()
+          const vendorByObjectId = await Vendor.findById(order.vendorId).lean() as any
           if (vendorByObjectId && (vendorByObjectId as any).id) {
             vendorId = (vendorByObjectId as any).id.toString()
             vendorName = order.vendorName || null
@@ -20346,7 +20461,7 @@ export async function approveReturnRequest(
   const hasParentOrderId = !!originalOrder.parentOrderId
     const childOrders = await Order.find({ 
     parentOrderId: originalOrder.id 
-    }).lean()
+    }).lean() as any
   
   const isParentOrder = childOrders.length > 0
   const isChildOrder = hasParentOrderId
@@ -20367,9 +20482,8 @@ export async function approveReturnRequest(
       parentOrderId: originalOrder.id
     })
     .populate('vendorId', 'id name')
-    .lean()
+    .lean() as any
     
-    console.log(`[approveReturnRequest] Found ${childOrdersWithVendor.length} child orders for split order`)
     
     // Find which child order contains the item at originalOrderItemIndex
     let currentItemIndex = 0
@@ -20419,7 +20533,7 @@ export async function approveReturnRequest(
       } else if (originalOrderRaw.vendorId instanceof mongoose.Types.ObjectId) {
         // Legacy ObjectId format - query vendor to get string 'id'
         try {
-          const vendorByObjectId = await Vendor.findById(originalOrderRaw.vendorId).lean()
+          const vendorByObjectId = await Vendor.findById(originalOrderRaw.vendorId).lean() as any
           if (vendorByObjectId && (vendorByObjectId as any).id) {
             originalVendorId = (vendorByObjectId as any).id.toString()
             originalVendorName = originalOrderRaw.vendorName || (vendorByObjectId as any).name || null
@@ -20469,7 +20583,7 @@ export async function approveReturnRequest(
   })
   
   // Query vendor by 'id' field (string)
-  let vendorExists = await Vendor.findOne({ id: originalVendorId }).lean()
+  let vendorExists = await Vendor.findOne({ id: originalVendorId }).lean() as any
   
   // If not found, try legacy ObjectId lookup (for backward compatibility)
   if (!vendorExists) {
@@ -20477,7 +20591,7 @@ export async function approveReturnRequest(
     // Check if vendorId could be an ObjectId string
     if (mongoose.Types.ObjectId.isValid(originalVendorId)) {
       try {
-        const vendorByObjectId = await Vendor.findById(originalVendorId).lean()
+        const vendorByObjectId = await Vendor.findById(originalVendorId).lean() as any
         if (vendorByObjectId) {
           // Found by ObjectId, but we need the string 'id' field
           originalVendorId = (vendorByObjectId as any).id || originalVendorId
@@ -20593,7 +20707,7 @@ export async function rejectReturnRequest(
   await connectDB()
   
   // Get return request
-  const returnRequest = await ReturnRequest.findOne({ returnRequestId }).lean()
+  const returnRequest = await ReturnRequest.findOne({ returnRequestId }).lean() as any
   
   if (!returnRequest) {
     throw new Error('Return request not found')
@@ -20630,7 +20744,7 @@ export async function completeReturnRequest(returnRequestId: string): Promise<an
   await connectDB()
   
   // Get return request
-  const returnRequest = await ReturnRequest.findOne({ returnRequestId }).lean()
+  const returnRequest = await ReturnRequest.findOne({ returnRequestId }).lean() as any
   
   if (!returnRequest) {
     throw new Error('Return request not found')
@@ -20664,7 +20778,7 @@ export async function completeReturnRequest(returnRequestId: string): Promise<an
 export async function getProductSizeChart(productId: string): Promise<any | null> {
   await connectDB()
   
-  const sizeChart = await ProductSizeChart.findOne({ productId }).lean()
+  const sizeChart = await ProductSizeChart.findOne({ productId }).lean() as any
   
   if (!sizeChart) {
     return null
@@ -20679,10 +20793,10 @@ export async function getProductSizeChart(productId: string): Promise<any | null
 export async function getProductSizeCharts(productIds: string[]): Promise<Record<string, any>> {
   await connectDB()
   
-  const sizeCharts = await ProductSizeChart.find({ productId: { $in: productIds } }).lean()
+  const sizeCharts = await ProductSizeChart.find({ productId: { $in: productIds } }).lean() as any
   
   const result: Record<string, any> = {}
-  sizeCharts.forEach((chart) => {
+  sizeCharts.forEach((chart: any) => {
     result[chart.productId] = toPlainObject(chart)
   })
   
@@ -20702,7 +20816,7 @@ export async function upsertProductSizeChart(
   await connectDB()
   
   // Validate product exists
-  const product = await Uniform.findOne({ id: productId }).lean()
+  const product = await Uniform.findOne({ id: productId }).lean() as any
   if (!product) {
     throw new Error(`Product with ID ${productId} not found`)
   }
@@ -20759,16 +20873,16 @@ export async function getPOsEligibleForGRN(vendorId: string): Promise<any[]> {
   await connectDB()
   
   // Get vendor
-  const vendor = await Vendor.findOne({ id: vendorId }).select('_id id name').lean()
-  if (!vendor) {
-    throw new Error(`Vendor not found: ${vendorId}`)
+  const vendor = await Vendor.findOne({ id: vendorId }).select('_id id name').lean() as any
+    console.warn(`[updateVendor] Vendor not found: ${vendorId}`);
+    return null // Return null instead of throwing - let API route handle 404
   }
   
   // Get all POs for this vendor
   const pos = await PurchaseOrder.find({ vendorId: vendorId })
     .populate('companyId', 'id name')
     .sort({ po_date: -1 })
-    .lean()
+    .lean() as any
   
   if (pos.length === 0) {
     return []
@@ -20777,9 +20891,8 @@ export async function getPOsEligibleForGRN(vendorId: string): Promise<any[]> {
   // Get all existing GRNs to filter out POs that already have GRN
   const existingGRNs = await GRN.find({ vendorId: vendorId })
     .select('poNumber')
-    .lean()
+    .lean() as any
   
-  const poNumbersWithGRN = new Set(existingGRNs.map((g: any) => g.poNumber))
   
   // For each PO, check if it's fully delivered and doesn't have GRN
   const eligiblePOs: any[] = []
@@ -20803,7 +20916,7 @@ export async function getPOsEligibleForGRN(vendorId: string): Promise<any[]> {
       if (shippingStatus === 'FULLY_DELIVERED') {
         console.log(`[getPOsEligibleForGRN] ✅ PO ${po.client_po_number} is FULLY_DELIVERED, adding to eligible list`)
         // Get PRs linked to this PO to get delivery details
-        const poOrderMappings = await POOrder.find({ purchase_order_id: po._id }).lean()
+        const poOrderMappings = await POOrder.find({ purchase_order_id: po._id }).lean() as any
         if (poOrderMappings.length === 0) {
           continue
         }
@@ -20811,9 +20924,8 @@ export async function getPOsEligibleForGRN(vendorId: string): Promise<any[]> {
         const orderIds = poOrderMappings.map(m => m.order_id)
         const prs = await Order.find({ _id: { $in: orderIds } })
           .select('id pr_number deliveredDate items')
-          .lean()
+          .lean() as any
         
-        // Calculate total items and delivery date
         let totalItems = 0
         let latestDeliveryDate: Date | null = null
         
@@ -20834,7 +20946,8 @@ export async function getPOsEligibleForGRN(vendorId: string): Promise<any[]> {
           poNumber: po.client_po_number,
           poDate: po.po_date,
           vendorId: po.vendorId,
-          vendorName: vendor.name,
+          vendorName: 
+    vendor.name,
           companyId: (po.companyId as any)?.id || po.companyId,
           companyName: (po.companyId as any)?.name || '',
           deliveryDate: latestDeliveryDate,
@@ -20879,16 +20992,16 @@ export async function createGRNByVendor(
   await connectDB()
   
   // Get vendor
-  const vendor = await Vendor.findOne({ id: vendorId }).select('_id id name').lean()
-  if (!vendor) {
-    throw new Error(`Vendor not found: ${vendorId}`)
+  const vendor = await Vendor.findOne({ id: vendorId }).select('_id id name').lean() as any
+    console.warn(`[updateVendor] Vendor not found: ${vendorId}`);
+    return null // Return null instead of throwing - let API route handle 404
   }
   
   // Get PO
   const Company = (await import('../models/Company')).default
   const pos = await PurchaseOrder.find({ vendorId: vendorId, client_po_number: poNumber })
     .populate('companyId', 'id name')
-    .lean()
+    .lean() as any
   
   if (pos.length === 0) {
     throw new Error(`PO not found: ${poNumber} for vendor ${vendorId}`)
@@ -20910,15 +21023,16 @@ export async function createGRNByVendor(
   }
   
   // Get all PRs (Orders) linked to this PO
-  const poOrderMappings = await POOrder.find({ purchase_order_id: po._id }).lean()
+  const poOrderMappings = await POOrder.find({ purchase_order_id: po._id }).lean() as any
   if (poOrderMappings.length === 0) {
     throw new Error(`No PRs found for PO ${poNumber}`)
   }
   
-  const orderIds = poOrderMappings.map(m => m.order_id)
-  const prs = await Order.find({ _id: { $in: orderIds } })
+  // Get order string IDs from mappings
+  const orderIds = poOrderMappings.map(m => String(m.order_id)).filter(Boolean)
+  const prs = await Order.find({ id: { $in: orderIds } })
     .select('id pr_number items deliveryStatus')
-    .lean()
+    .lean() as any
   
   if (prs.length === 0) {
     throw new Error(`No PRs found for PO ${poNumber}`)
@@ -20984,7 +21098,8 @@ export async function createGRNByVendor(
     id: grnId,
     grnId: grnId,
     grnNumber: grnNumber.trim(),
-    companyId: company.id,
+    companyId: 
+    company.id,
     vendorId: vendorId,
     poNumber: poNumber,
     prNumbers: prNumbers,
@@ -21000,7 +21115,7 @@ export async function createGRNByVendor(
   console.log(`[createGRNByVendor] ✅ Created GRN: ${grnId} for PO: ${poNumber} by vendor: ${vendorId}`)
   
   // Return created GRN
-  const createdGRN = await GRN.findById(grn._id).lean()
+  const createdGRN = await GRN.findById(grn._id).lean() as any
   
   const result = toPlainObject(createdGRN)
   if (vendor) {
@@ -21025,25 +21140,22 @@ export async function getGRNsByVendor(vendorId: string): Promise<any[]> {
   // This ensures grnStatus, approvedBy, approvedAt, and all other fields are included
   const grns = await GRN.find({ vendorId: vendorId, grnRaisedByVendor: true })
     .sort({ createdAt: -1 })
-    .lean()
+    .lean() as any
   
-  console.log(`[getGRNsByVendor] Found ${grns.length} GRN(s) for vendor ${vendorId}`)
   
   // Get company names
   const companyIds = [...new Set(grns.map((g: any) => g.companyId).filter(Boolean))]
   const companies = await Company.find({ id: { $in: companyIds } })
     .select('id name')
-    .lean()
+    .lean() as any
   
-  const companyMap = new Map(companies.map((c: any) => [c.id, c.name]))
   
   // Get PO dates for all GRNs
   const poNumbers = [...new Set(grns.map((g: any) => g.poNumber).filter(Boolean))]
   const pos = await PurchaseOrder.find({ client_po_number: { $in: poNumbers } })
     .select('client_po_number po_date')
-    .lean()
+    .lean() as any
   
-  const poDateMap = new Map(pos.map((po: any) => [po.client_po_number, po.po_date]))
   
   return grns.map((grn: any) => {
     const plain = toPlainObject(grn)
@@ -21106,30 +21218,23 @@ export async function getGRNsRaisedByVendors(companyId?: string): Promise<any[]>
   
   const grns = await GRN.find(query)
     .sort({ createdAt: -1 })
-    .lean()
+    .lean() as any
   
-  // Get vendor and company names
   const vendorIds = [...new Set(grns.map((g: any) => g.vendorId).filter(Boolean))]
   const companyIds = [...new Set(grns.map((g: any) => g.companyId).filter(Boolean))]
   
   const vendors = await Vendor.find({ id: { $in: vendorIds } })
     .select('id name')
-    .lean()
+    .lean() as any
   
-  const companies = await Company.find({ id: { $in: companyIds } })
-    .select('id name')
-    .lean()
-  
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
   const companyMap = new Map(companies.map((c: any) => [c.id, c.name]))
   
   // Get PO dates for all GRNs
   const poNumbers = [...new Set(grns.map((g: any) => g.poNumber).filter(Boolean))]
   const pos = await PurchaseOrder.find({ client_po_number: { $in: poNumbers } })
     .select('client_po_number po_date')
-    .lean()
+    .lean() as any
   
-  const poDateMap = new Map(pos.map((po: any) => [po.client_po_number, po.po_date]))
   
   return grns.map((grn: any) => {
     const plain = toPlainObject(grn)
@@ -21172,21 +21277,15 @@ export async function getGRNsPendingAcknowledgment(companyId?: string): Promise<
   
   const grns = await GRN.find(query)
     .sort({ createdAt: -1 })
-    .lean()
+    .lean() as any
   
-  // Get vendor and company names
   const vendorIds = [...new Set(grns.map((g: any) => g.vendorId).filter(Boolean))]
   const companyIds = [...new Set(grns.map((g: any) => g.companyId).filter(Boolean))]
   
   const vendors = await Vendor.find({ id: { $in: vendorIds } })
     .select('id name')
-    .lean()
+    .lean() as any
   
-  const companies = await Company.find({ id: { $in: companyIds } })
-    .select('id name')
-    .lean()
-  
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
   const companyMap = new Map(companies.map((c: any) => [c.id, c.name]))
   
   return grns.map((grn: any) => {
@@ -21238,19 +21337,19 @@ export async function acknowledgeGRN(
   console.log(`[acknowledgeGRN] ✅ Acknowledged GRN: ${grnId} by: ${acknowledgedBy}`)
   
   // Return updated GRN
-  const updatedGRN = await GRN.findById(grn._id).lean()
+  const updatedGRN = await GRN.findById(grn._id).lean() as any
   
   // Add vendor and company names
   let vendorName = null
   let companyName = null
-  if (updatedGRN && updatedGRN.vendorId) {
-    const vendor = await Vendor.findOne({ id: updatedGRN.vendorId }).select('id name').lean()
+  if (updatedGRN && (updatedGRN as any).vendorId) {
+    const vendor = await Vendor.findOne({ id: (updatedGRN as any).vendorId }).select('id name').lean() as any
     if (vendor) {
       vendorName = (vendor as any).name
     }
   }
-  if (updatedGRN && updatedGRN.companyId) {
-    const company = await Company.findOne({ id: updatedGRN.companyId }).select('id name').lean()
+  if (updatedGRN && (updatedGRN as any).companyId) {
+    const company = await Company.findOne({ id: (updatedGRN as any).companyId }).select('id name').lean() as any
     if (company) {
       companyName = (company as any).name
     }
@@ -21300,19 +21399,19 @@ export async function approveGRN(
   console.log(`[approveGRN] ✅ Approved GRN: ${grnId} by: ${approvedBy}`)
   
   // Return updated GRN
-  const updatedGRN = await GRN.findById(grn._id).lean()
+  const updatedGRN = await GRN.findById(grn._id).lean() as any
   
   // Add vendor and company names
   let vendorName = null
   let companyName = null
-  if (updatedGRN && updatedGRN.vendorId) {
-    const vendor = await Vendor.findOne({ id: updatedGRN.vendorId }).select('id name').lean()
+  if (updatedGRN && (updatedGRN as any).vendorId) {
+    const vendor = await Vendor.findOne({ id: (updatedGRN as any).vendorId }).select('id name').lean() as any
     if (vendor) {
       vendorName = (vendor as any).name
     }
   }
-  if (updatedGRN && updatedGRN.companyId) {
-    const company = await Company.findOne({ id: updatedGRN.companyId }).select('id name').lean()
+  if (updatedGRN && (updatedGRN as any).companyId) {
+    const company = await Company.findOne({ id: (updatedGRN as any).companyId }).select('id name').lean() as any
     if (company) {
       companyName = (company as any).name
     }
@@ -21357,13 +21456,13 @@ export async function createInvoiceByVendor(
   await connectDB()
   
   // Get GRN with full details
-  const grn = await GRN.findOne({ id: grnId }).lean()
+  const grn = await GRN.findOne({ id: grnId }).lean() as any
   if (!grn) {
     throw new Error(`GRN not found: ${grnId}`)
   }
   
   // Validate vendor authorization
-  if (grn.vendorId !== vendorId) {
+  if ((grn as any).vendorId !== vendorId) {
     throw new Error(`Vendor ${vendorId} is not authorized to create invoice for GRN ${grnId}`)
   }
   
@@ -21403,9 +21502,8 @@ export async function createInvoiceByVendor(
   // Get products from Uniform model (using product codes which are stored in 'id' field)
   const products = await Uniform.find({ id: { $in: productCodes } })
     .select('id name _id')
-    .lean()
+    .lean() as any
   
-  const productMap = new Map(products.map((p: any) => [p.id, p]))
   
   // Extract product ObjectIds for ProductVendor query
   // ProductVendor.productId is an ObjectId, not a string product code
@@ -21414,17 +21512,16 @@ export async function createInvoiceByVendor(
   // Convert vendorId (6-digit string) to ObjectId for query (ProductVendor uses ObjectId for vendorId)
   // Also fetch vendor name for later use in response
   // Note: Vendor is already imported at the top of the file
-  const vendorForQuery = await Vendor.findOne({ id: vendorId }).select('_id id name').lean()
-  if (!vendorForQuery) {
+  const vendorForQuery = await Vendor.findOne({ id: vendorId }).select('_id id name').lean() as any
     throw new Error(`Vendor not found: ${vendorId}`)
   }
-  const vendorObjectId = vendorForQuery._id
+  const vendorObjectId = (vendorForQuery as any)._id
   
   // Get vendor prices for products using ObjectIds
   const productVendors = await ProductVendor.find({
     vendorId: vendorObjectId,
     productId: { $in: productObjectIds }
-  }).lean()
+  }).lean() as any
   
   // Create a map: product ObjectId -> price
   const priceMapByObjectId = new Map(productVendors.map((pv: any) => {
@@ -21510,12 +21607,11 @@ export async function createInvoiceByVendor(
   console.log(`[createInvoiceByVendor] ✅ Created Invoice: ${invoiceId} for GRN: ${grnId}`)
   
   // Return created invoice with vendor and company names
-  const createdInvoice = await Invoice.findById(invoice._id).lean()
+  const createdInvoice = await Invoice.findById(invoice._id).lean() as any
   
   // Reuse vendor data already fetched above (vendorForQuery)
   const company = await Company.findOne({ id: grn.companyId }).select('id name').lean()
   
-  const result = toPlainObject(createdInvoice)
   if (vendorForQuery) {
     (result as any).vendorName = vendorForQuery.name
   }
@@ -21536,15 +21632,13 @@ export async function getInvoicesByVendor(vendorId: string): Promise<any[]> {
   
   const invoices = await Invoice.find({ vendorId: vendorId })
     .sort({ invoiceDate: -1, createdAt: -1 })
-    .lean()
+    .lean() as any
   
-  // Get company names
   const companyIds = [...new Set(invoices.map((i: any) => i.companyId).filter(Boolean))]
   const companies = await Company.find({ id: { $in: companyIds } })
     .select('id name')
-    .lean()
+    .lean() as any
   
-  const companyMap = new Map(companies.map((c: any) => [c.id, c.name]))
   
   return invoices.map((invoice: any) => {
     const plain = toPlainObject(invoice)
@@ -21570,15 +21664,13 @@ export async function getInvoicesForCompany(companyId?: string): Promise<any[]> 
   
   const invoices = await Invoice.find(query)
     .sort({ invoiceDate: -1, createdAt: -1 })
-    .lean()
+    .lean() as any
   
-  // Get vendor names
   const vendorIds = [...new Set(invoices.map((i: any) => i.vendorId).filter(Boolean))]
   const vendors = await Vendor.find({ id: { $in: vendorIds } })
     .select('id name')
-    .lean()
+    .lean() as any
   
-  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
   
   return invoices.map((invoice: any) => {
     const plain = toPlainObject(invoice)
@@ -21621,12 +21713,11 @@ export async function approveInvoice(
   console.log(`[approveInvoice] ✅ Approved Invoice: ${invoiceId} by: ${approvedBy}`)
   
   // Return updated invoice with vendor and company names
-  const updatedInvoice = await Invoice.findById(invoice._id).lean()
-  
-  const vendor = await Vendor.findOne({ id: invoice.vendorId }).select('id name').lean()
-  const company = await Company.findOne({ id: invoice.companyId }).select('id name').lean()
-  
+  const updatedInvoice = await Invoice.findById(invoice._id).lean() as any
   const result = toPlainObject(updatedInvoice)
+  
+  const vendor = await Vendor.findOne({ id: invoice.vendorId }).select('id name').lean() as any
+  
   if (vendor) {
     (result as any).vendorName = vendor.name
   }

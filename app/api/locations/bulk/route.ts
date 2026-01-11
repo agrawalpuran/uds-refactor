@@ -37,26 +37,33 @@ export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
     await connectDB()
-    const body = await request.json()
+    // Parse JSON body with error handling
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({
+        error: 'Invalid JSON in request body'
+      }, { status: 400 })
     const { locations, companyId, adminEmail } = body
 
     if (!locations || !Array.isArray(locations)) {
       return NextResponse.json({ error: 'Invalid locations data' }, { status: 400 })
-    }
 
     if (!companyId) {
       return NextResponse.json({ error: 'Company ID is required' }, { status: 400 })
-    }
 
+    }
     if (!adminEmail) {
       return NextResponse.json({ error: 'Admin email is required' }, { status: 400 })
-    }
 
     // Verify company exists
     const company = await Company.findOne({ id: companyId })
     if (!company) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 })
     }
+    if (!company) {
+      return NextResponse.json({ error: 'Company not found' }, { status: 404 })
 
     // Verify Company Admin permissions
     const isAdmin = await isCompanyAdmin(adminEmail, companyId)
@@ -64,7 +71,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only company admins can bulk upload locations' 
       }, { status: 403 })
-    }
 
     // Get existing locations for this company to check duplicates
     const existingLocations = await getLocationsByCompany(companyId)
@@ -73,6 +79,7 @@ export async function POST(request: Request) {
     )
 
     // Get all employees for this company (for adminId validation)
+    }
     const companyEmployees = await Employee.find({ companyId: company._id }).lean()
     const companyEmployeeIds = new Set(
       companyEmployees.map((e: any) => e.employeeId || e.id)
@@ -202,12 +209,44 @@ export async function POST(request: Request) {
       failed: failureCount,
       results: results
     }, { status: 200 })
-
   } catch (error: any) {
     console.error('API Error in /api/locations/bulk POST:', error)
-    return NextResponse.json({ 
-      error: error.message || 'Failed to process bulk location upload' 
-    }, { status: 500 })
-  }
+    // Return appropriate status code based on error type
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    const isConnectionError = errorMessage.includes('Mongo') || 
+                              errorMessage.includes('connection') || 
+                              errorMessage.includes('ECONNREFUSED') ||
+                              errorMessage.includes('timeout') ||
+                              errorMessage.includes('network') ||
+                              error?.code === 'ECONNREFUSED' ||
+                              error?.code === 'ETIMEDOUT' ||
+                              error?.name === 'MongoNetworkError' ||
+                              error?.name === 'MongoServerSelectionError'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('not found') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
+    return NextResponse.json(
+      { error: errorMessage },
+      { status: 500 }
+    )
 }
 

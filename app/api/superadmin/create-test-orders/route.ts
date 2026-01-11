@@ -36,9 +36,16 @@ export async function POST(request: Request) {
         { error: 'Test Order feature is disabled' },
         { status: 403 }
       )
-    }
 
-    const body = await request.json()
+    // Parse JSON body with error handling
+    }
+    let body: any
+    try {
+      body = await request.json()
+    } catch (jsonError: any) {
+      return NextResponse.json({ 
+        error: 'Invalid JSON in request body' 
+      }, { status: 400 })
     const { companyId, branchId, vendorIds, numEmployees, autoApproveLocationAdmin = true } = body
 
     if (!companyId || !branchId || !vendorIds || !Array.isArray(vendorIds) || vendorIds.length === 0) {
@@ -46,37 +53,30 @@ export async function POST(request: Request) {
         { error: 'Missing required fields: companyId, branchId, vendorIds' },
         { status: 400 }
       )
-    }
 
     if (!numEmployees || numEmployees < 1 || numEmployees > 10) {
       return NextResponse.json(
         { error: 'numEmployees must be between 1 and 10' },
         { status: 400 }
       )
-    }
 
     // Find company
+    }
     const company = await Company.findOne({ id: companyId })
     if (!company) {
       return NextResponse.json(
         { error: `Company not found: ${companyId}` },
         { status: 404 }
       )
-    }
 
-    // Find branch
-    let branch
-    if (mongoose.Types.ObjectId.isValid(branchId)) {
-      branch = await Branch.findById(branchId)
-    } else {
-      branch = await Branch.findOne({ id: branchId })
+    // Find branch - use string ID only
     }
+    const branch = await Branch.findOne({ id: branchId })
     if (!branch) {
       return NextResponse.json(
         { error: `Branch not found: ${branchId}` },
         { status: 404 }
       )
-    }
 
     // Note: Branch-company validation removed to match normal order creation behavior.
     // The branch dropdown is already filtered by company in the UI, so we trust the selection
@@ -84,6 +84,7 @@ export async function POST(request: Request) {
 
     // Find employees for the branch
     const branchObjectId = branch._id
+    }
     const employees = await Employee.find({
       $or: [
         { locationId: branchObjectId },
@@ -98,19 +99,22 @@ export async function POST(request: Request) {
         { error: 'No active employees found for the selected branch' },
         { status: 404 }
       )
-    }
 
     // Find location admin for the branch
+    }
     const location = await Location.findOne({
       $or: [
         { _id: branchObjectId },
         { branchId: branchObjectId },
       ]
     })
+    if (!location) {
+      return NextResponse.json({ error: 'Location not found' }, { status: 404 })
 
     let locationAdmin = null
     if (location) {
-      const locationAdminDoc = await LocationAdmin.findOne({ locationId: location._id })
+    }
+    const locationAdminDoc = await LocationAdmin.findOne({ locationId: location._id })
       if (locationAdminDoc) {
         locationAdmin = await Employee.findById(locationAdminDoc.adminId)
       }
@@ -143,9 +147,9 @@ export async function POST(request: Request) {
         { error: 'No products found for the selected company' },
         { status: 404 }
       )
-    }
 
     const productIds = productCompanyLinks.map(pc => pc.productId || pc.uniformId)
+    }
     const products = await Uniform.find({
       _id: { $in: productIds }
     }).limit(20).lean()
@@ -155,13 +159,13 @@ export async function POST(request: Request) {
         { error: 'No products found for the selected company' },
         { status: 404 }
       )
-    }
 
     // Verify vendors exist and are linked to products
     const vendorObjectIds = await Promise.all(
       vendorIds.map(async (vid: string) => {
         // Build query - try by 'id' field first, then ObjectId if valid
-        let query: any = { id: vid }
+    }
+    let query: any = { id: vid }
         
         // Only add ObjectId query if vid is a valid ObjectId format (24 hex chars)
         if (mongoose.Types.ObjectId.isValid(vid) && /^[0-9a-fA-F]{24}$/.test(vid)) {
@@ -179,15 +183,12 @@ export async function POST(request: Request) {
         const vendor = await mongoose.connection.db.collection('vendors').findOne(query)
         return vendor?._id
       })
-    )
-
     const validVendorIds = vendorObjectIds.filter(Boolean)
     if (validVendorIds.length === 0) {
       return NextResponse.json(
         { error: 'No valid vendors found' },
         { status: 404 }
       )
-    }
 
     // Create orders for each employee
     const createdOrders = []
@@ -204,7 +205,8 @@ export async function POST(request: Request) {
       
       // Try to find a Location that corresponds to this branch
       // Locations and Branches are separate collections, so we need to match by address or name
-      const existingLocation = await Location.findOne({
+    }
+    const existingLocation = await Location.findOne({
         companyId: company._id,
         name: branch.name,
         city: branch.city,
@@ -435,7 +437,7 @@ export async function POST(request: Request) {
           })
 
           if (!order || !order.id) {
-            throw new Error(`createOrder returned invalid order: ${JSON.stringify(order)}`)
+            throw new Error(`createOrder returned invalid order: ${JSON.stringify(order)`)
           }
 
         // Handle split orders: createOrder may return a single order or the first order with split metadata
@@ -448,7 +450,10 @@ export async function POST(request: Request) {
           // If _id is missing, try to find order by id field
           console.log(`[create-test-orders] Order _id missing, looking up by id field: ${orderId}`)
           const foundOrder = await Order.findOne({ id: orderId }).lean()
-          if (foundOrder) {
+    if (!foundOrder) {
+      return NextResponse.json({ error: 'Order not found' }, { status: 404 })
+    }
+    if (foundOrder) {
             orderObjectId = foundOrder._id
             console.log(`[create-test-orders] Found order by id field: ${foundOrder._id}`)
           } else {
@@ -467,7 +472,7 @@ export async function POST(request: Request) {
         
         // Ensure we have a valid ObjectId
         if (!orderObjectId || !(orderObjectId instanceof mongoose.Types.ObjectId)) {
-          throw new Error(`Order created but missing valid _id: ${JSON.stringify({ id: order.id, _id: order._id, orderObjectId })}`)
+          throw new Error(`Order created but missing valid _id: ${JSON.stringify({ id: order.id, _id: order._id, orderObjectId })`)
         }
 
         const ordersToUpdate: any[] = []
@@ -484,7 +489,10 @@ export async function POST(request: Request) {
           // Single order - fetch it to ensure we have the _id
           console.log(`[create-test-orders] Handling single order with _id: ${orderObjectId}`)
           const singleOrder = await Order.findById(orderObjectId).lean()
-          if (singleOrder) {
+    if (!singleOrder) {
+      return NextResponse.json({ error: 'Order not found' }, { status: 404 })
+    }
+    if (singleOrder) {
             ordersToUpdate.push(singleOrder)
             console.log(`[create-test-orders] Found single order: ${singleOrder.id}`)
           } else {
@@ -513,7 +521,7 @@ export async function POST(request: Request) {
 
           // Auto-approve by Location Admin if flag is enabled
           if (autoApproveLocationAdmin) {
-            const prNumber = `PR-TEST-${company.id}-${timestamp}-${String(i + 1).padStart(3, '0')}`
+            const prNumber = `PR-TEST-${company.id}-${timestamp}-${String(i + 1).padStart(3, '0')`
             const prDate = new Date()
 
             // Check if company requires company admin approval
@@ -568,6 +576,8 @@ export async function POST(request: Request) {
 
         // Get the updated order to include PR number in response (use the first order)
         const updatedOrder = await Order.findById(ordersToUpdate[0]._id).lean()
+    if (!updatedOrder) {
+      return NextResponse.json({ error: 'Order not found' }, { status: 404 })
         
         createdOrders.push({
           orderId: order.id,
@@ -597,7 +607,6 @@ export async function POST(request: Request) {
         { error: 'Failed to create any orders' },
         { status: 500 }
       )
-    }
 
     return NextResponse.json({
       success: true,
@@ -610,14 +619,42 @@ export async function POST(request: Request) {
         vendors: vendorIds.length
       }
     })
-
   } catch (error: any) {
     console.error('API Error in /api/superadmin/create-test-orders POST:', error)
+    console.error('API Error in /api/superadmin/create-test-orders POST:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+    
+    // Return 400 for validation/input errors
+    if (errorMessage.includes('required') ||
+        errorMessage.includes('invalid') ||
+        errorMessage.includes('missing') ||
+        errorMessage.includes('Invalid JSON')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 400 }
+      )
+    
+    // Return 404 for not found errors
+    if (errorMessage.includes('not found') || 
+        errorMessage.includes('Not found') || 
+        errorMessage.includes('does not exist')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 404 }
+      )
+    
+    // Return 401 for authentication errors
+    if (errorMessage.includes('Unauthorized') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('token')) {
+      return NextResponse.json(
+        { error: errorMessage },
+        { status: 401 }
+      )
+    
+    // Return 500 for server errors
     return NextResponse.json(
-      {
-        error: error.message || 'Unknown error occurred',
-        type: 'api_error'
-      },
+      { error: errorMessage },
       { status: 500 }
     )
   }
