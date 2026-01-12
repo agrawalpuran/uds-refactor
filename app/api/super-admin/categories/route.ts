@@ -1,3 +1,4 @@
+
 /**
  * Super Admin Category Management APIs
  * 
@@ -17,6 +18,7 @@ import mongoose from 'mongoose'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB()
@@ -47,42 +49,34 @@ export async function GET(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Error fetching categories:', error)
-    console.error('Error fetching categories:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
-    // Return 400 for validation/input errors
-    if (errorMessage.includes('required') ||
-        errorMessage.includes('invalid') ||
-        errorMessage.includes('missing') ||
-        errorMessage.includes('Invalid JSON')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 400 }
-      )
+    if (
+      errorMessage.includes('required') ||
+      errorMessage.includes('invalid') ||
+      errorMessage.includes('missing') ||
+      errorMessage.includes('Invalid JSON')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 400 })
+    }
     
-    // Return 404 for not found errors
-    if (errorMessage.includes('not found') || 
-        errorMessage.includes('Not found') || 
-        errorMessage.includes('does not exist')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 404 }
-      )
+    if (
+      errorMessage.includes('not found') ||
+      errorMessage.includes('Not found') ||
+      errorMessage.includes('does not exist')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 404 })
+    }
     
-    // Return 401 for authentication errors
-    if (errorMessage.includes('Unauthorized') ||
-        errorMessage.includes('authentication') ||
-        errorMessage.includes('token')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 401 }
-      )
-    
-    // Return 500 for server errors
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
-    )
+    if (
+      errorMessage.includes('Unauthorized') ||
+      errorMessage.includes('authentication') ||
+      errorMessage.includes('token')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 401 })
+    }
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
   }
 }
 
@@ -92,19 +86,18 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    // TODO: Add Super Admin authentication check
-    // For now, allow creation but add validation
-    
     await connectDB()
     
-    // Parse JSON body with error handling
     let body: any
     try {
       body = await request.json()
     } catch (jsonError: any) {
-      return NextResponse.json({
-        error: 'Invalid JSON in request body'
-      }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      )
+    }
+
     const { name, isSystemCategory = false } = body
     
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -112,10 +105,11 @@ export async function POST(request: NextRequest) {
         { error: 'Category name is required' },
         { status: 400 }
       )
-    
+    }
+
     const trimmedName = name.trim()
     
-    // Check if category with same name already exists (case-insensitive)
+    // Check if category exists (case-insensitive)
     const existing = await Category.findOne({
       name: { $regex: new RegExp(`^${trimmedName}$`, 'i') }
     })
@@ -125,15 +119,14 @@ export async function POST(request: NextRequest) {
         { error: 'Category with this name already exists' },
         { status: 409 }
       )
-    
-    // Generate unique ID
     }
+
+    // Generate unique ID
     let categoryId = 500001
     while (await Category.findOne({ id: categoryId.toString() })) {
       categoryId++
     }
-    
-    // Create category
+
     const category = await Category.create({
       id: categoryId.toString(),
       name: trimmedName,
@@ -154,17 +147,18 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error('Error creating category:', error)
     
-    // Handle duplicate key error
     if (error.code === 11000 || error.message.includes('already exists')) {
       return NextResponse.json(
         { error: 'Category with this name already exists' },
         { status: 409 }
       )
+    }
     
     return NextResponse.json(
       { error: error.message || 'Failed to create category' },
       { status: 500 }
     )
+  }
 }
 
 /**
@@ -173,18 +167,18 @@ export async function POST(request: NextRequest) {
  */
 export async function PUT(request: NextRequest) {
   try {
-    // TODO: Add Super Admin authentication check
-    
     await connectDB()
     
-    // Parse JSON body with error handling
     let body: any
     try {
       body = await request.json()
     } catch (jsonError: any) {
-      return NextResponse.json({
-        error: 'Invalid JSON in request body'
-      }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      )
+    }
+
     const { categoryId, name, status } = body
     
     if (!categoryId) {
@@ -192,9 +186,8 @@ export async function PUT(request: NextRequest) {
         { error: 'categoryId is required' },
         { status: 400 }
       )
-    
-    // Find category - use string ID
     }
+
     const category = await Category.findOne({ id: categoryId })
     
     if (!category) {
@@ -202,33 +195,35 @@ export async function PUT(request: NextRequest) {
         { error: 'Category not found' },
         { status: 404 }
       )
-    
-    // Update fields
+    }
+
+    // Update name
     if (name !== undefined && name !== category.name) {
       const trimmedName = name.trim()
-      
-      // Check if new name conflicts with existing category - use string ID
-    }
-    const existing = await Category.findOne({
+
+      const existing = await Category.findOne({
         name: { $regex: new RegExp(`^${trimmedName}$`, 'i') },
         id: { $ne: category.id }
       })
-      
+
       if (existing) {
         return NextResponse.json(
           { error: 'Category with this name already exists' },
           { status: 409 }
         )
-      
+      }
+
       category.name = trimmedName
     }
-    
+
+    // Update status
     if (status !== undefined) {
       if (status !== 'active' && status !== 'inactive') {
         return NextResponse.json(
           { error: 'Status must be "active" or "inactive"' },
           { status: 400 }
         )
+      }
       category.status = status
     }
     
@@ -246,42 +241,35 @@ export async function PUT(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Error updating category:', error)
-    console.error('Error updating category:', error)
+    
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
-    // Return 400 for validation/input errors
-    if (errorMessage.includes('required') ||
-        errorMessage.includes('invalid') ||
-        errorMessage.includes('missing') ||
-        errorMessage.includes('Invalid JSON')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 400 }
-      )
+    if (
+      errorMessage.includes('required') ||
+      errorMessage.includes('invalid') ||
+      errorMessage.includes('missing') ||
+      errorMessage.includes('Invalid JSON')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 400 })
+    }
     
-    // Return 404 for not found errors
-    if (errorMessage.includes('not found') || 
-        errorMessage.includes('Not found') || 
-        errorMessage.includes('does not exist')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 404 }
-      )
+    if (
+      errorMessage.includes('not found') ||
+      errorMessage.includes('Not found') ||
+      errorMessage.includes('does not exist')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 404 })
+    }
     
-    // Return 401 for authentication errors
-    if (errorMessage.includes('Unauthorized') ||
-        errorMessage.includes('authentication') ||
-        errorMessage.includes('token')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 401 }
-      )
-    
-    // Return 500 for server errors
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
-    )
+    if (
+      errorMessage.includes('Unauthorized') ||
+      errorMessage.includes('authentication') ||
+      errorMessage.includes('token')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 401 })
+    }
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
   }
 }
 
@@ -291,8 +279,6 @@ export async function PUT(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    // TODO: Add Super Admin authentication check
-    
     await connectDB()
     
     const searchParams = request.nextUrl.searchParams
@@ -303,9 +289,8 @@ export async function DELETE(request: NextRequest) {
         { error: 'categoryId is required' },
         { status: 400 }
       )
-    
-    // Find category - use string ID
     }
+
     const category = await Category.findOne({ id: categoryId })
     
     if (!category) {
@@ -313,16 +298,15 @@ export async function DELETE(request: NextRequest) {
         { error: 'Category not found' },
         { status: 404 }
       )
-    
-    // Don't allow deleting system categories
     }
+
     if (category.isSystemCategory) {
       return NextResponse.json(
         { error: 'Cannot delete system categories' },
         { status: 403 }
       )
-    
-    // Check if category has active subcategories - use string ID
+    }
+
     const Subcategory = mongoose.model('Subcategory')
     const subcategoryCount = await Subcategory.countDocuments({
       parentCategoryId: category.id,
@@ -338,8 +322,7 @@ export async function DELETE(request: NextRequest) {
         { status: 409 }
       )
     }
-    
-    // Soft delete
+
     category.status = 'inactive'
     await category.save()
     
@@ -349,42 +332,46 @@ export async function DELETE(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Error deleting category:', error)
-    console.error('Error deleting category:', error)
+    
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
-    // Return 400 for validation/input errors
-    if (errorMessage.includes('required') ||
-        errorMessage.includes('invalid') ||
-        errorMessage.includes('missing') ||
-        errorMessage.includes('Invalid JSON')) {
+    if (
+      errorMessage.includes('required') ||
+      errorMessage.includes('invalid') ||
+      errorMessage.includes('missing') ||
+      errorMessage.includes('Invalid JSON')
+    ) {
       return NextResponse.json(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
-    // Return 404 for not found errors
-    if (errorMessage.includes('not found') || 
-        errorMessage.includes('Not found') || 
-        errorMessage.includes('does not exist')) {
+    if (
+      errorMessage.includes('not found') ||
+      errorMessage.includes('Not found') ||
+      errorMessage.includes('does not exist')
+    ) {
       return NextResponse.json(
         { error: errorMessage },
         { status: 404 }
       )
-    
-    // Return 401 for authentication errors
-    if (errorMessage.includes('Unauthorized') ||
-        errorMessage.includes('authentication') ||
-        errorMessage.includes('token')) {
+    }
+
+    if (
+      errorMessage.includes('Unauthorized') ||
+      errorMessage.includes('authentication') ||
+      errorMessage.includes('token')
+    ) {
       return NextResponse.json(
         { error: errorMessage },
         { status: 401 }
       )
-    
-    // Return 500 for server errors
+    }
+
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
   }
 }
-

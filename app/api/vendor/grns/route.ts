@@ -16,6 +16,7 @@ import '@/lib/models/Order'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -27,17 +28,18 @@ export async function GET(request: Request) {
         { error: 'Vendor ID is required' },
         { status: 400 }
       )
+    }
 
     if (type === 'eligible') {
       // Get POs eligible for GRN creation
       const eligiblePOs = await getPOsEligibleForGRN(vendorId)
-      return NextResponse.json(eligiblePOs) else {
+      return NextResponse.json(eligiblePOs)
+    } else {
       // Get GRNs raised by vendor
-    }
-    const grns = await getGRNsByVendor(vendorId)
+      const grns = await getGRNsByVendor(vendorId)
       return NextResponse.json(grns)
+    }
   } catch (error: any) {
-    console.error('API Error in /api/vendor/grns GET:', error)
     console.error('API Error in /api/vendor/grns GET:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
@@ -50,6 +52,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -59,6 +62,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -68,6 +72,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -91,6 +96,8 @@ export async function POST(request: Request) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+
     const { poNumber, grnNumber, grnDate, vendorId, remarks } = body
 
     // Validate required fields
@@ -99,25 +106,28 @@ export async function POST(request: Request) {
         { error: 'PO Number is required' },
         { status: 400 }
       )
+    }
 
     if (!grnNumber || !grnNumber.trim()) {
       return NextResponse.json(
         { error: 'GRN Number is required' },
         { status: 400 }
       )
+    }
 
     if (!grnDate) {
       return NextResponse.json(
         { error: 'GRN Date is required' },
         { status: 400 }
       )
-
     }
+
     if (!vendorId) {
       return NextResponse.json(
         { error: 'Vendor ID is required' },
         { status: 400 }
       )
+    }
 
     // Parse GRN date
     const grnDateObj = new Date(grnDate)
@@ -142,7 +152,6 @@ export async function POST(request: Request) {
     return NextResponse.json(grn, { status: 201 })
   } catch (error: any) {
     console.error('API Error in /api/vendor/grns POST:', error)
-    console.error('API Error in /api/vendor/grns POST:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -154,6 +163,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -163,6 +173,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -172,6 +183,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -180,4 +192,3 @@ export async function POST(request: Request) {
     )
   }
 }
-

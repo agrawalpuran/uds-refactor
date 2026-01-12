@@ -241,3 +241,4 @@ export async function DELETE(request: Request) {
       error: error.message || 'Failed to delete branch'
     }, { status: 400 })
   }
+}

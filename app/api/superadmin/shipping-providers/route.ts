@@ -1,3 +1,4 @@
+
 import { NextResponse } from 'next/server'
 import {
   getAllShipmentServiceProviders,
@@ -16,6 +17,7 @@ import '@/lib/models/ShipmentServiceProvider'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -31,17 +33,20 @@ export async function GET(request: Request) {
           { error: 'Provider not found' },
           { status: 404 }
         )
+      }
       return NextResponse.json(provider)
+    }
 
     if (providerId) {
       const provider = await getShipmentServiceProviderById(providerId)
-    }
-    if (!provider) {
+      if (!provider) {
         return NextResponse.json(
           { error: 'Provider not found' },
           { status: 404 }
         )
+      }
       return NextResponse.json(provider)
+    }
 
     const providers = await getAllShipmentServiceProviders(includeInactive)
     return NextResponse.json(providers)
@@ -59,6 +64,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -68,6 +74,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -77,6 +84,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -100,6 +108,8 @@ export async function POST(request: Request) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+
     const {
       providerCode,
       providerName,
@@ -123,13 +133,14 @@ export async function POST(request: Request) {
         { error: 'Missing required fields: providerCode, providerName, providerType' },
         { status: 400 }
       )
-
     }
+
     if (!['API_AGGREGATOR', 'DIRECT_COURIER', 'FREIGHT'].includes(providerType)) {
       return NextResponse.json(
         { error: 'Invalid providerType. Must be one of: API_AGGREGATOR, DIRECT_COURIER, FREIGHT' },
         { status: 400 }
       )
+    }
 
     const provider = await createShipmentServiceProvider(
       {
@@ -166,6 +177,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -175,6 +187,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -184,6 +197,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -207,6 +221,8 @@ export async function PUT(request: Request) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+
     const { providerId, ...updates } = body
 
     if (!providerId) {
@@ -214,13 +230,14 @@ export async function PUT(request: Request) {
         { error: 'providerId is required' },
         { status: 400 }
       )
-
     }
+
     if (updates.providerType && !['API_AGGREGATOR', 'DIRECT_COURIER', 'FREIGHT'].includes(updates.providerType)) {
       return NextResponse.json(
         { error: 'Invalid providerType. Must be one of: API_AGGREGATOR, DIRECT_COURIER, FREIGHT' },
         { status: 400 }
       )
+    }
 
     const provider = await updateShipmentServiceProvider(
       providerId,
@@ -243,6 +260,7 @@ export async function PUT(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -252,6 +270,7 @@ export async function PUT(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -261,6 +280,7 @@ export async function PUT(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -284,6 +304,7 @@ export async function DELETE(request: Request) {
         { error: 'providerId is required' },
         { status: 400 }
       )
+    }
 
     await deleteShipmentServiceProvider(providerId)
 
@@ -302,6 +323,7 @@ export async function DELETE(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -311,6 +333,7 @@ export async function DELETE(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -320,6 +343,7 @@ export async function DELETE(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -328,4 +352,3 @@ export async function DELETE(request: Request) {
     )
   }
 }
-

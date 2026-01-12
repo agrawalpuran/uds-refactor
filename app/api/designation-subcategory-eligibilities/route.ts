@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import connectDB from '@/lib/db/mongodb'
 import DesignationSubcategoryEligibility from '@/lib/models/DesignationSubcategoryEligibility'
 import Subcategory from '@/lib/models/Subcategory'
+import Category from '@/lib/models/Category'
 import { validateAndGetCompanyId } from '@/lib/utils/api-auth'
 import mongoose from 'mongoose'
 
@@ -21,6 +22,7 @@ import mongoose from 'mongoose'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB()
@@ -41,6 +43,7 @@ export async function GET(request: NextRequest) {
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
+    }
     
     // Get company - use string ID
     const Company = mongoose.model('Company')
@@ -51,9 +54,9 @@ export async function GET(request: NextRequest) {
         { error: 'Company not found' },
         { status: 404 }
       )
+    }
     
     // Build query - use string IDs
-    }
     const query: any = {
       companyId: company.id
     }
@@ -65,56 +68,65 @@ export async function GET(request: NextRequest) {
     if (subCategoryId) {
       // Use string ID for subcategory
       const subcategory = await Subcategory.findOne({ id: subCategoryId })
-    if (!subcategory) {
-      return NextResponse.json({ error: 'Subcategory not found' }, { status: 404 })
-      
-    }
-    if (subcategory) {
-        query.subCategoryId = subcategory.id
+      if (!subcategory) {
+        return NextResponse.json({ error: 'Subcategory not found' }, { status: 404 })
       }
+      query.subCategoryId = subcategory.id
     }
     
     if (status === 'active' || status === 'inactive') {
       query.status = status
     }
     
+    // CRITICAL FIX: subCategoryId is stored as STRING ID, not ObjectId - cannot use populate
     const eligibilities = await DesignationSubcategoryEligibility.find(query)
-      .populate('subCategoryId', 'id name parentCategoryId')
-      .populate({
-        path: 'subCategoryId',
-        populate: {
-          path: 'parentCategoryId',
-          select: 'id name isSystemCategory'
-        }
-      })
-      .sort({ designationId: 1, 'subCategoryId.name': 1 })
+      .sort({ designationId: 1 })
       .lean()
+    
+    // Manually fetch subcategories using string IDs
+    const uniqueSubcategoryIds = [...new Set(eligibilities.map((e: any) => e.subCategoryId).filter(Boolean))]
+    const subcategories = await Subcategory.find({ id: { $in: uniqueSubcategoryIds } })
+      .select('id name parentCategoryId')
+      .lean()
+    const subcategoryMap = new Map(subcategories.map((s: any) => [s.id, s]))
+    
+    // Manually fetch parent categories
+    const uniqueParentCategoryIds = [...new Set(subcategories.map((s: any) => s.parentCategoryId).filter(Boolean))]
+    const parentCategories = await Category.find({ id: { $in: uniqueParentCategoryIds } })
+      .select('id name isSystemCategory')
+      .lean()
+    const parentCategoryMap = new Map(parentCategories.map((c: any) => [c.id, c]))
     
     return NextResponse.json({
       success: true,
-      eligibilities: eligibilities.map((elig: any) => ({
-        id: elig.id,
-        designationId: elig.designationId,
-        subCategoryId: (elig.subCategoryId as any)?.id || String(elig.subCategoryId),
-        subcategory: elig.subCategoryId ? {
-          id: (elig.subCategoryId as any).id,
-          name: (elig.subCategoryId as any).name,
-          parentCategoryId: String((elig.subCategoryId as any).parentCategoryId?.id || (elig.subCategoryId as any).parentCategoryId || ''),
-          parentCategory: (elig.subCategoryId as any).parentCategoryId ? {
-            id: (elig.subCategoryId as any).parentCategoryId.id,
-            name: (elig.subCategoryId as any).parentCategoryId.name,
-            isSystemCategory: (elig.subCategoryId as any).parentCategoryId.isSystemCategory
-          } : null
-        } : null,
-        companyId: String(elig.companyId),
-        gender: elig.gender,
-        quantity: elig.quantity,
-        renewalFrequency: elig.renewalFrequency,
-        renewalUnit: elig.renewalUnit,
-        status: elig.status,
-        createdAt: elig.createdAt,
-        updatedAt: elig.updatedAt
-      }))
+      eligibilities: eligibilities.map((elig: any) => {
+        const subcategory = subcategoryMap.get(elig.subCategoryId)
+        const parentCategory = subcategory?.parentCategoryId ? parentCategoryMap.get(subcategory.parentCategoryId) : null
+        
+        return {
+          id: elig.id,
+          designationId: elig.designationId,
+          subCategoryId: elig.subCategoryId,
+          subcategory: subcategory ? {
+            id: subcategory.id,
+            name: subcategory.name,
+            parentCategoryId: subcategory.parentCategoryId,
+            parentCategory: parentCategory ? {
+              id: parentCategory.id,
+              name: parentCategory.name,
+              isSystemCategory: parentCategory.isSystemCategory
+            } : null
+          } : null,
+          companyId: String(elig.companyId),
+          gender: elig.gender,
+          quantity: elig.quantity,
+          renewalFrequency: elig.renewalFrequency,
+          renewalUnit: elig.renewalUnit,
+          status: elig.status,
+          createdAt: elig.createdAt,
+          updatedAt: elig.updatedAt
+        }
+      })
     })
   } catch (error: any) {
     console.error('Error fetching designation-subcategory eligibilities:', error)
@@ -130,6 +142,7 @@ export async function GET(request: NextRequest) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -139,6 +152,7 @@ export async function GET(request: NextRequest) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -148,6 +162,7 @@ export async function GET(request: NextRequest) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -173,6 +188,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+
     const { 
       companyId, 
       designationId, 
@@ -188,41 +205,43 @@ export async function POST(request: NextRequest) {
         { error: 'designationId, subCategoryId, quantity, and renewalFrequency are required' },
         { status: 400 }
       )
+    }
     
     // Validate companyId from authenticated user context
     let validatedCompanyId: string
     try {
-    }
-    const authContext = await validateAndGetCompanyId(request, companyId)
+      const authContext = await validateAndGetCompanyId(request, companyId)
       validatedCompanyId = authContext.companyId
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
+    }
     
     if (quantity < 0) {
       return NextResponse.json(
         { error: 'quantity must be >= 0' },
         { status: 400 }
       )
-    
     }
+    
     if (renewalFrequency <= 0) {
       return NextResponse.json(
         { error: 'renewalFrequency must be > 0' },
         { status: 400 }
       )
+    }
     
     if (renewalUnit !== 'months' && renewalUnit !== 'years') {
       return NextResponse.json(
         { error: 'renewalUnit must be "months" or "years"' },
         { status: 400 }
       )
+    }
     
     // Get company - use string ID
     const Company = mongoose.model('Company')
-    }
     const company = await Company.findOne({ id: validatedCompanyId })
     
     if (!company) {
@@ -230,9 +249,9 @@ export async function POST(request: NextRequest) {
         { error: 'Company not found' },
         { status: 404 }
       )
+    }
     
     // Get subcategory - use string ID and validate it belongs to the company
-    }
     const subcategory = await Subcategory.findOne({ id: subCategoryId })
     
     if (!subcategory) {
@@ -240,23 +259,24 @@ export async function POST(request: NextRequest) {
         { error: 'Subcategory not found' },
         { status: 404 }
       )
+    }
     
     // CRITICAL SECURITY CHECK: Ensure subcategory belongs to the company - use string IDs
-    }
     if (String(subcategory.companyId) !== company.id) {
       return NextResponse.json(
         { error: 'Subcategory does not belong to the specified company' },
         { status: 403 }
       )
+    }
     
     if (subcategory.status !== 'active') {
       return NextResponse.json(
         { error: 'Subcategory is not active' },
         { status: 400 }
       )
+    }
     
     // Check if eligibility already exists - use string IDs
-    }
     const existing = await DesignationSubcategoryEligibility.findOne({
       designationId: designationId.trim(),
       subCategoryId: subcategory.id,
@@ -269,36 +289,59 @@ export async function POST(request: NextRequest) {
         { error: 'Eligibility already exists for this designation, subcategory, company, and gender combination' },
         { status: 409 }
       )
+    }
     
     // Generate unique ID
-    }
     let eligibilityId = 700001
     while (await DesignationSubcategoryEligibility.findOne({ id: eligibilityId.toString() })) {
       eligibilityId++
     }
     
     // Create eligibility - use string IDs
-    const eligibility = await DesignationSubcategoryEligibility.create({
-      id: eligibilityId.toString(),
-      designationId: designationId.trim(),
-      subCategoryId: subcategory.id,
-      companyId: company.id,
+    // CRITICAL: Ensure all IDs are explicitly strings to prevent ObjectId casting
+    const eligibilityData = {
+      id: String(eligibilityId),
+      designationId: String(designationId.trim()),
+      subCategoryId: String(subcategory.id), // Explicitly cast to string
+      companyId: String(company.id), // Explicitly cast to string
       gender: gender || 'unisex',
-      quantity,
-      renewalFrequency,
-      renewalUnit,
-      status: 'active'
-    })
+      quantity: Number(quantity),
+      renewalFrequency: Number(renewalFrequency),
+      renewalUnit: renewalUnit || 'months',
+      status: 'active' as const
+    }
     
-    await eligibility.populate('subCategoryId', 'id name')
+    // Validate string IDs before create
+    if (!/^\d{6}$/.test(eligibilityData.subCategoryId)) {
+      return NextResponse.json(
+        { error: `Invalid subCategoryId format: ${eligibilityData.subCategoryId}` },
+        { status: 400 }
+      )
+    }
+    if (!/^\d{6}$/.test(eligibilityData.companyId)) {
+      return NextResponse.json(
+        { error: `Invalid companyId format: ${eligibilityData.companyId}` },
+        { status: 400 }
+      )
+    }
+    
+    const eligibility = await DesignationSubcategoryEligibility.create(eligibilityData)
+    
+    // CRITICAL FIX: subCategoryId is stored as STRING ID, not ObjectId - cannot use populate
+    // Fetch subcategory manually for response
+    const subcategoryForResponse = await Subcategory.findOne({ id: subcategory.id }).select('id name').lean()
     
     return NextResponse.json({
       success: true,
       eligibility: {
         id: eligibility.id,
         designationId: eligibility.designationId,
-        subCategoryId: String(eligibility.subCategoryId),
-        companyId: String(eligibility.companyId),
+        subCategoryId: eligibility.subCategoryId,
+        subcategory: subcategoryForResponse ? {
+          id: subcategoryForResponse.id,
+          name: subcategoryForResponse.name
+        } : null,
+        companyId: eligibility.companyId,
         gender: eligibility.gender,
         quantity: eligibility.quantity,
         renewalFrequency: eligibility.renewalFrequency,
@@ -315,11 +358,13 @@ export async function POST(request: NextRequest) {
         { error: 'Eligibility already exists for this designation, subcategory, company, and gender combination' },
         { status: 409 }
       )
+    }
     
     return NextResponse.json(
       { error: error.message || 'Failed to create eligibility' },
       { status: 500 }
     )
+  }
 }
 
 /**
@@ -338,6 +383,8 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+
     const { 
       eligibilityId, 
       quantity, 
@@ -351,9 +398,9 @@ export async function PUT(request: NextRequest) {
         { error: 'eligibilityId is required' },
         { status: 400 }
       )
+    }
     
     // Find eligibility - use string ID
-    }
     const eligibility = await DesignationSubcategoryEligibility.findOne({ id: eligibilityId })
     
     if (!eligibility) {
@@ -361,17 +408,18 @@ export async function PUT(request: NextRequest) {
         { error: 'Eligibility not found' },
         { status: 404 }
       )
+    }
     
     // TODO: Validate companyId from auth context
     
     // Update fields
     if (quantity !== undefined) {
-    }
-    if (quantity < 0) {
+      if (quantity < 0) {
         return NextResponse.json(
           { error: 'quantity must be >= 0' },
           { status: 400 }
         )
+      }
       eligibility.quantity = quantity
     }
     
@@ -381,6 +429,7 @@ export async function PUT(request: NextRequest) {
           { error: 'renewalFrequency must be > 0' },
           { status: 400 }
         )
+      }
       eligibility.renewalFrequency = renewalFrequency
     }
     
@@ -390,6 +439,7 @@ export async function PUT(request: NextRequest) {
           { error: 'renewalUnit must be "months" or "years"' },
           { status: 400 }
         )
+      }
       eligibility.renewalUnit = renewalUnit
     }
     
@@ -399,19 +449,27 @@ export async function PUT(request: NextRequest) {
           { error: 'Status must be "active" or "inactive"' },
           { status: 400 }
         )
+      }
       eligibility.status = status
     }
     
     await eligibility.save()
-    await eligibility.populate('subCategoryId', 'id name')
+    
+    // CRITICAL FIX: subCategoryId is stored as STRING ID, not ObjectId - cannot use populate
+    // Fetch subcategory manually for response
+    const subcategoryForResponse = await Subcategory.findOne({ id: eligibility.subCategoryId }).select('id name').lean()
     
     return NextResponse.json({
       success: true,
       eligibility: {
         id: eligibility.id,
         designationId: eligibility.designationId,
-        subCategoryId: String(eligibility.subCategoryId),
-        companyId: String(eligibility.companyId),
+        subCategoryId: eligibility.subCategoryId,
+        subcategory: subcategoryForResponse ? {
+          id: subcategoryForResponse.id,
+          name: subcategoryForResponse.name
+        } : null,
+        companyId: eligibility.companyId,
         gender: eligibility.gender,
         quantity: eligibility.quantity,
         renewalFrequency: eligibility.renewalFrequency,
@@ -433,6 +491,7 @@ export async function PUT(request: NextRequest) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -442,6 +501,7 @@ export async function PUT(request: NextRequest) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -451,6 +511,7 @@ export async function PUT(request: NextRequest) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -476,9 +537,9 @@ export async function DELETE(request: NextRequest) {
         { error: 'eligibilityId is required' },
         { status: 400 }
       )
+    }
     
     // Find eligibility - use string ID
-    }
     const eligibility = await DesignationSubcategoryEligibility.findOne({ id: eligibilityId })
     
     if (!eligibility) {
@@ -486,23 +547,25 @@ export async function DELETE(request: NextRequest) {
         { error: 'Eligibility not found' },
         { status: 404 }
       )
+    }
     
     // Validate companyId from authenticated user context and ensure eligibility belongs to user's company
     try {
       const authContext = await validateAndGetCompanyId(request)
       // Compare string IDs directly
       const eligibilityCompanyId = String(eligibility.companyId)
-    }
-    if (eligibilityCompanyId !== authContext.companyId) {
+      if (eligibilityCompanyId !== authContext.companyId) {
         return NextResponse.json(
           { error: 'Forbidden: Eligibility does not belong to your company' },
           { status: 403 }
         )
+      }
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
+    }
     
     // Soft delete
     eligibility.status = 'inactive'
@@ -526,6 +589,7 @@ export async function DELETE(request: NextRequest) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -535,6 +599,7 @@ export async function DELETE(request: NextRequest) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -544,6 +609,7 @@ export async function DELETE(request: NextRequest) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -552,4 +618,3 @@ export async function DELETE(request: NextRequest) {
     )
   }
 }
-

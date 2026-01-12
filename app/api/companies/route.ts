@@ -101,8 +101,7 @@ export async function GET(request: Request) {
     const companies = await getAllCompanies()
     return NextResponse.json(companies)
   } catch (error: any) {
-    console.error('API Error:', error)}
-  }
+    console.error('API Error:', error)
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     const isConnectionError = errorMessage.includes('Mongo') || 
@@ -143,6 +142,7 @@ export async function GET(request: Request) {
       { status: 500 }
     )
   }
+}
 
 export async function PATCH(request: Request) {
   try {
@@ -154,10 +154,12 @@ export async function PATCH(request: Request) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
     const { companyId, employeeId, action, canApproveOrders, showPrices, allowPersonalPayments, enableEmployeeOrder, allowLocationAdminViewFeedback, allowEligibilityConsumptionReset, logo, primaryColor, secondaryColor, name, enable_pr_po_workflow, enable_site_admin_pr_approval, require_company_admin_po_approval, allow_multi_pr_po, shipmentRequestMode } = body
 
     if (!companyId) {
       return NextResponse.json({ error: 'Company ID is required' }, { status: 400 })
+    }
 
     if (action === 'addAdmin') {
       if (!employeeId) {
@@ -210,67 +212,80 @@ export async function PATCH(request: Request) {
       if (showPrices !== undefined) {
         if (typeof showPrices !== 'boolean') {
           return NextResponse.json({ error: 'showPrices must be a boolean' }, { status: 400 })
+        }
         settings.showPrices = showPrices
       }
       if (allowPersonalPayments !== undefined) {
         if (typeof allowPersonalPayments !== 'boolean') {
           return NextResponse.json({ error: 'allowPersonalPayments must be a boolean' }, { status: 400 })
+        }
         settings.allowPersonalPayments = allowPersonalPayments
       }
       if (enableEmployeeOrder !== undefined) {
         if (typeof enableEmployeeOrder !== 'boolean') {
           return NextResponse.json({ error: 'enableEmployeeOrder must be a boolean' }, { status: 400 })
+        }
         settings.enableEmployeeOrder = enableEmployeeOrder
       }
       if (allowLocationAdminViewFeedback !== undefined) {
         if (typeof allowLocationAdminViewFeedback !== 'boolean') {
           return NextResponse.json({ error: 'allowLocationAdminViewFeedback must be a boolean' }, { status: 400 })
+        }
         settings.allowLocationAdminViewFeedback = allowLocationAdminViewFeedback
       }
       if (allowEligibilityConsumptionReset !== undefined) {
         if (typeof allowEligibilityConsumptionReset !== 'boolean') {
           return NextResponse.json({ error: 'allowEligibilityConsumptionReset must be a boolean' }, { status: 400 })
+        }
         settings.allowEligibilityConsumptionReset = allowEligibilityConsumptionReset
       }
       if (logo !== undefined) {
         if (typeof logo !== 'string') {
           return NextResponse.json({ error: 'logo must be a string' }, { status: 400 })
+        }
         settings.logo = logo
       }
       if (primaryColor !== undefined) {
         if (typeof primaryColor !== 'string') {
           return NextResponse.json({ error: 'primaryColor must be a string' }, { status: 400 })
+        }
         settings.primaryColor = primaryColor
       }
       if (secondaryColor !== undefined) {
         if (typeof secondaryColor !== 'string') {
           return NextResponse.json({ error: 'secondaryColor must be a string' }, { status: 400 })
+        }
         settings.secondaryColor = secondaryColor
       }
       if (name !== undefined) {
         if (typeof name !== 'string') {
           return NextResponse.json({ error: 'name must be a string' }, { status: 400 })
+        }
         settings.name = name
       }
       // PR → PO Workflow Configuration
       if (enable_pr_po_workflow !== undefined) {
         if (typeof enable_pr_po_workflow !== 'boolean') {
           return NextResponse.json({ error: 'enable_pr_po_workflow must be a boolean' }, { status: 400 })
+        }
         settings.enable_pr_po_workflow = enable_pr_po_workflow
       }
       if (enable_site_admin_pr_approval !== undefined) {
         if (typeof enable_site_admin_pr_approval !== 'boolean') {
           return NextResponse.json({ error: 'enable_site_admin_pr_approval must be a boolean' }, { status: 400 })
+        }
         settings.enable_site_admin_pr_approval = enable_site_admin_pr_approval
       }
       if (require_company_admin_po_approval !== undefined) {
         if (typeof require_company_admin_po_approval !== 'boolean') {
           return NextResponse.json({ error: 'require_company_admin_po_approval must be a boolean' }, { status: 400 })
+        }
         settings.require_company_admin_po_approval = require_company_admin_po_approval
       }
       if (allow_multi_pr_po !== undefined) {
         if (typeof allow_multi_pr_po !== 'boolean') {
           return NextResponse.json({ error: 'allow_multi_pr_po must be a boolean' }, { status: 400 })
+        }
         settings.allow_multi_pr_po = allow_multi_pr_po
       }
       if (shipmentRequestMode !== undefined) {
@@ -324,9 +339,9 @@ export async function PATCH(request: Request) {
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
-      
-    
+
 export async function POST(request: Request) {
   try {
     // Parse JSON body with error handling
@@ -365,6 +380,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -374,11 +390,13 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
 

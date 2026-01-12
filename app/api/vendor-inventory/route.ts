@@ -1,10 +1,11 @@
+
 import { NextResponse } from 'next/server'
 import { getVendorInventory, updateVendorInventory, getLowStockItems, getVendorInventorySummary } from '@/lib/db/data-access'
 import '@/lib/models/VendorInventory' // Ensure model is registered
 
-
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -15,19 +16,21 @@ export async function GET(request: Request) {
 
     if (!vendorId) {
       return NextResponse.json({ error: 'Vendor ID is required' }, { status: 400 })
+    }
 
     // Get low stock items
     if (lowStock) {
       const lowStockItems = await getLowStockItems(vendorId)
       return NextResponse.json(lowStockItems)
+    }
 
     // Get inventory summary
     if (summary) {
       const summaryData = await getVendorInventorySummary(vendorId)
       return NextResponse.json(summaryData)
+    }
 
     // Get inventory
-    }
     const inventory = await getVendorInventory(vendorId, productId || undefined)
     return NextResponse.json(inventory)
   } catch (error: any) {
@@ -42,6 +45,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -51,12 +55,14 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
 
 export async function PUT(request: Request) {
@@ -69,6 +75,8 @@ export async function PUT(request: Request) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+
     const { vendorId, productId, sizeInventory, lowInventoryThreshold } = body
 
     if (!vendorId || !productId) {
@@ -76,13 +84,14 @@ export async function PUT(request: Request) {
         { error: 'Vendor ID and Product ID are required' },
         { status: 400 }
       )
-
     }
+
     if (!sizeInventory || typeof sizeInventory !== 'object') {
       return NextResponse.json(
         { error: 'sizeInventory must be an object with size: quantity pairs' },
         { status: 400 }
       )
+    }
 
     // lowInventoryThreshold is optional
     const updated = await updateVendorInventory(
@@ -105,6 +114,7 @@ export async function PUT(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -114,11 +124,12 @@ export async function PUT(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
-

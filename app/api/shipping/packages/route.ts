@@ -1,3 +1,4 @@
+
 import { NextResponse } from 'next/server'
 import connectDB from '@/lib/db/mongodb'
 import {
@@ -12,6 +13,7 @@ import {
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -21,10 +23,13 @@ export async function GET(request: Request) {
 
     const packages = await getAllShipmentPackages(activeOnly)
 
-    return NextResponse.json({
-      success: true,
-      packages,
-    }, { status: 200 })
+    return NextResponse.json(
+      {
+        success: true,
+        packages,
+      },
+      { status: 200 }
+    )
   } catch (error: any) {
     console.error('[packages API] GET Error:', error)
     console.error('[packages API] GET Error:', error)
@@ -39,6 +44,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -48,6 +54,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -57,6 +64,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -80,6 +88,8 @@ export async function POST(request: Request) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+
     const { packageName, lengthCm, breadthCm, heightCm, volumetricDivisor, isActive } = body
 
     // Validation
@@ -88,32 +98,35 @@ export async function POST(request: Request) {
         { error: 'packageName is required' },
         { status: 400 }
       )
+    }
 
     if (!lengthCm || lengthCm <= 0) {
       return NextResponse.json(
         { error: 'lengthCm must be a positive number' },
         { status: 400 }
       )
-
     }
+
     if (!breadthCm || breadthCm <= 0) {
       return NextResponse.json(
         { error: 'breadthCm must be a positive number' },
         { status: 400 }
       )
+    }
 
     if (!heightCm || heightCm <= 0) {
       return NextResponse.json(
         { error: 'heightCm must be a positive number' },
         { status: 400 }
       )
-
     }
+
     if (volumetricDivisor !== undefined && volumetricDivisor <= 0) {
       return NextResponse.json(
         { error: 'volumetricDivisor must be a positive number' },
         { status: 400 }
       )
+    }
 
     await connectDB()
 
@@ -129,10 +142,13 @@ export async function POST(request: Request) {
       'superadmin' // TODO: Get from auth context
     )
 
-    return NextResponse.json({
-      success: true,
-      package: package_,
-    }, { status: 201 })
+    return NextResponse.json(
+      {
+        success: true,
+        package: package_,
+      },
+      { status: 201 }
+    )
   } catch (error: any) {
     console.error('[packages API] POST Error:', error)
     console.error('[packages API] POST Error:', error)
@@ -147,6 +163,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -156,6 +173,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -165,6 +183,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -172,3 +191,4 @@ export async function POST(request: Request) {
       { status: 500 }
     )
   }
+}

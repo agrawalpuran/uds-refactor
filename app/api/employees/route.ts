@@ -192,5 +192,6 @@ export async function DELETE(request: Request) {
     console.error('API Error deleting employee:', error)
     return NextResponse.json({ 
       error: error.message || 'Failed to delete employee'
-    }, { status: 400 })
+    }, { status: 400 });
   }
+}

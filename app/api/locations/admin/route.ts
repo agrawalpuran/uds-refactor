@@ -30,6 +30,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: 'Invalid JSON in request body' 
       }, { status: 400 })
+    }
     
     const { locationId, adminId, adminEmail, companyId } = body
 
@@ -41,22 +42,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: 'Location ID, admin email, and company ID are required' 
       }, { status: 400 })
-    
+    }
+
     // Validate parameter formats
     if (typeof locationId !== 'string' || locationId.trim() === '') {
       return NextResponse.json({ 
         error: 'Invalid location ID format' 
       }, { status: 400 })
-    
+    }
+
     if (typeof adminEmail !== 'string' || adminEmail.trim() === '' || !adminEmail.includes('@')) {
       return NextResponse.json({ 
         error: 'Invalid admin email format' 
       }, { status: 400 })
-    
+    }
+
     if (typeof companyId !== 'string' || companyId.trim() === '') {
       return NextResponse.json({ 
         error: 'Invalid company ID format' 
       }, { status: 400 })
+    }
 
     // Verify Company Admin authorization
     const isAdmin = await isCompanyAdmin(adminEmail, companyId)
@@ -64,48 +69,52 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only Company Admins can assign Location Admins' 
       }, { status: 403 })
+    }
 
     // Get location to verify it belongs to the company
     const location = await getLocationById(locationId)
-    }
     if (!location) {
       return NextResponse.json({ error: 'Location not found' }, { status: 404 })
+    }
 
-    const locationCompanyId = location.companyId?.id || location.companyId
+    const locationCompanyId = (location as any).companyId?.id || (location as any).companyId
     if (locationCompanyId !== companyId) {
       return NextResponse.json({ 
         error: 'Location does not belong to your company' 
       }, { status: 403 })
+    }
 
     // Handle adminId assignment or removal
     // adminId can be: string (employeeId), null, undefined, or empty string
     if (adminId && adminId.trim() !== '') {
       // Assign new admin - verify employee exists and belongs to the same company
-    }
-    const employee = await Employee.findOne({ employeeId: adminId })
+      const employee = await Employee.findOne({ employeeId: adminId })
       if (!employee) {
         return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
-    }
-    if (!employee) {
+      }
+
+      if (!employee) {
         return NextResponse.json({ 
           error: `Employee not found: ${adminId}` 
         }, { status: 404 })
+      }
 
       // Verify employee belongs to the same company - use string ID
-      const employeeCompanyId = String(employee.companyId)
+      const employeeCompanyId = String((employee as any).companyId)
       if (employeeCompanyId !== companyId) {
         return NextResponse.json({ 
           error: `Employee ${adminId} does not belong to your company` 
         }, { status: 403 })
+      }
 
       // Update location with new admin
-    }
-    const updated = await updateLocation(locationId, { adminId })
+      const updated = await updateLocation(locationId, { adminId })
       return NextResponse.json({ 
         success: true, 
         location: updated,
         message: 'Location Admin assigned successfully'
-      }) else {
+      })
+    } else {
       // Remove Location Admin (adminId is null, undefined, or empty)
       console.log('Removing Location Admin for location:', locationId)
       const updated = await updateLocation(locationId, { adminId: null as any })
@@ -115,6 +124,7 @@ export async function POST(request: Request) {
         location: updated,
         message: 'Location Admin removed successfully'
       })
+    }
   } catch (error: any) {
     console.error('API Error in /api/locations/admin POST:', error)
     
@@ -127,12 +137,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: error.message || 'Invalid request' 
       }, { status: 400 })
-    
+    }
+
     if (error.message && error.message.includes('Unauthorized')) {
       return NextResponse.json({ 
         error: error.message || 'Unauthorized' 
       }, { status: 401 })
-    
+    }
+
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     const isConnectionError = errorMessage.includes('Mongo') || 
@@ -140,10 +152,10 @@ export async function POST(request: Request) {
                               errorMessage.includes('ECONNREFUSED') ||
                               errorMessage.includes('timeout') ||
                               errorMessage.includes('network') ||
-                              error?.code === 'ECONNREFUSED' ||
-                              error?.code === 'ETIMEDOUT' ||
-                              error?.name === 'MongoNetworkError' ||
-                              error?.name === 'MongoServerSelectionError'
+                              (error as any)?.code === 'ECONNREFUSED' ||
+                              (error as any)?.code === 'ETIMEDOUT' ||
+                              (error as any)?.name === 'MongoNetworkError' ||
+                              (error as any)?.name === 'MongoServerSelectionError'
     
     // Return 400 for validation/input errors
     if (errorMessage.includes('required') ||
@@ -155,6 +167,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -164,12 +177,14 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
 
 /**
@@ -190,18 +205,20 @@ export async function GET(request: Request) {
       return NextResponse.json({ 
         error: 'Company ID and admin email are required' 
       }, { status: 400 })
-    
-    // Validate parameter formats
     }
+
+    // Validate parameter formats
     if (typeof companyId !== 'string' || companyId.trim() === '') {
       return NextResponse.json({ 
         error: 'Invalid company ID format' 
       }, { status: 400 })
-    
+    }
+
     if (typeof adminEmail !== 'string' || adminEmail.trim() === '' || !adminEmail.includes('@')) {
       return NextResponse.json({ 
         error: 'Invalid admin email format' 
       }, { status: 400 })
+    }
 
     // Verify Company Admin authorization
     const isAdmin = await isCompanyAdmin(adminEmail, companyId)
@@ -209,10 +226,11 @@ export async function GET(request: Request) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only Company Admins can view eligible employees' 
       }, { status: 403 })
+    }
 
     // Get employees - filter by location if locationId is provided
     let employees: any[] = []
-    }
+
     if (locationId) {
       console.log(`[GET /api/locations/admin] ===== START =====`)
       console.log(`[GET /api/locations/admin] Request params: locationId=${locationId}, companyId=${companyId}, adminEmail=${adminEmail}`)
@@ -224,16 +242,17 @@ export async function GET(request: Request) {
         return NextResponse.json({ 
           error: 'Location not found' 
         }, { status: 404 })
+      }
       
       console.log(`[GET /api/locations/admin] Location found:`, {
-        id: location.id,
-        name: location.name,
-        companyId: location.companyId,
-        companyIdType: typeof location.companyId,
-        companyIdValue: location.companyId?.id || location.companyId
+        id: (location as any).id,
+        name: (location as any).name,
+        companyId: (location as any).companyId,
+        companyIdType: typeof (location as any).companyId,
+        companyIdValue: (location as any).companyId?.id || (location as any).companyId
       })
       
-      const locationCompanyId = location.companyId?.id || location.companyId
+      const locationCompanyId = (location as any).companyId?.id || (location as any).companyId
       console.log(`[GET /api/locations/admin] Location companyId: ${locationCompanyId}, Request companyId: ${companyId}, Match: ${locationCompanyId === companyId}`)
       
       if (locationCompanyId !== companyId) {
@@ -241,11 +260,12 @@ export async function GET(request: Request) {
         return NextResponse.json({ 
           error: 'Location does not belong to your company' 
         }, { status: 403 })
+      }
       
       // Get employees for the specific location
       // IMPORTANT: If no location-specific employees found, fallback to ALL company employees
       // This allows assigning Location Admin even if employees don't have locationId set yet
-      const { getEmployeesByLocation, getEmployeesByCompany } = await import('@/lib/db/data-access')
+      const { getEmployeesByLocation, getEmployeesByCompany: getEmployeesByCompanyDynamic } = await import('@/lib/db/data-access')
       
       try {
         // Try to get location-specific employees first
@@ -261,7 +281,7 @@ export async function GET(request: Request) {
       if (employees.length === 0) {
         console.warn(`[GET /api/locations/admin] No location-specific employees found. Fetching ALL company employees as fallback.`)
         try {
-          employees = await getEmployeesByCompany(companyId)
+          employees = await getEmployeesByCompanyDynamic(companyId)
           console.log(`[GET /api/locations/admin] Fallback: getEmployeesByCompany returned ${employees.length} total company employees`)
           
           if (employees.length > 0) {
@@ -346,6 +366,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ 
         error: error.message || 'Invalid request' 
       }, { status: 400 })
+    }
     
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
@@ -354,10 +375,10 @@ export async function GET(request: Request) {
                               errorMessage.includes('ECONNREFUSED') ||
                               errorMessage.includes('timeout') ||
                               errorMessage.includes('network') ||
-                              error?.code === 'ECONNREFUSED' ||
-                              error?.code === 'ETIMEDOUT' ||
-                              error?.name === 'MongoNetworkError' ||
-                              error?.name === 'MongoServerSelectionError'
+                              (error as any)?.code === 'ECONNREFUSED' ||
+                              (error as any)?.code === 'ETIMEDOUT' ||
+                              (error as any)?.name === 'MongoNetworkError' ||
+                              (error as any)?.name === 'MongoServerSelectionError'
     
     // Return 400 for validation/input errors
     if (errorMessage.includes('required') ||
@@ -369,6 +390,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -378,11 +400,12 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
-

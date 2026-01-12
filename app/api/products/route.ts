@@ -1,10 +1,21 @@
-import { NextResponse } from 'next/server'
-import { getAllProducts, getProductsByCompany, getAllProductsByCompany, getProductById, getProductsForDesignation, getProductsByVendor, createProduct, updateProduct, deleteProduct } from '@/lib/db/data-access'
-import '@/lib/models/DesignationProductEligibility' // Ensure model is registered
 
+import { NextResponse } from 'next/server'
+import { 
+  getAllProducts, 
+  getProductsByCompany, 
+  getAllProductsByCompany, 
+  getProductById, 
+  getProductsForDesignation, 
+  getProductsByVendor, 
+  createProduct, 
+  updateProduct, 
+  deleteProduct 
+} from '@/lib/db/data-access'
+import '@/lib/models/DesignationProductEligibility' // Ensure model is registered
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -17,8 +28,10 @@ export async function GET(request: Request) {
     if (productId) {
       const product = await getProductById(productId)
       if (!product) {
-      return NextResponse.json({ error: 'Product not found' }, { status: 404 })
-    return NextResponse.json(product)
+        return NextResponse.json({ error: 'Product not found' }, { status: 404 })
+      }
+      return NextResponse.json(product)
+    }
 
     if (vendorId) {
       // 🔍 INSTRUMENTATION: API boundary
@@ -30,8 +43,7 @@ export async function GET(request: Request) {
       
       // CRITICAL VALIDATION: Ensure we're not returning all products
       // If products.length is suspiciously high (> 50), log a warning
-    }
-    if (products && products.length > 50) {
+      if (products && products.length > 50) {
         console.error('[API] /api/products GET - ⚠️ WARNING: Returning suspiciously high number of products:', products.length)
         console.error('[API] /api/products GET - This may indicate a data isolation issue!')
         console.error('[API] /api/products GET - Vendor ID:', vendorId)
@@ -48,6 +60,7 @@ export async function GET(request: Request) {
       // CRITICAL: Return products (already filtered by getProductsByVendor)
       // getProductsByVendor enforces ProductVendor relationship filtering
       return NextResponse.json(products || [])
+    }
 
     if (companyId && designation) {
       // Filter products by company AND designation AND gender
@@ -55,17 +68,19 @@ export async function GET(request: Request) {
       const products = await getProductsForDesignation(companyId, designation, gender)
       console.log(`Products for company ${companyId}, designation ${designation}, gender ${gender || 'unisex'}: ${products.length} products`)
       return NextResponse.json(products)
+    }
 
     if (companyId) {
       // If 'all=true' is specified, return all products without vendor filter (for category extraction)
       if (all) {
         const products = await getAllProductsByCompany(companyId)
         return NextResponse.json(products)
+      }
       // Otherwise, return only products with vendor fulfillment (for catalog/ordering)
       const products = await getProductsByCompany(companyId)
       return NextResponse.json(products)
-
     }
+
     const products = await getAllProducts()
     return NextResponse.json(products)
   } catch (error: any) {
@@ -81,12 +96,14 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     return NextResponse.json({ 
       error: errorMessage,
       type: isConnectionError ? 'database_connection_error' : 'api_error',
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     }, { status: 500 })
+  }
 }
 
 export async function POST(request: Request) {
@@ -99,14 +116,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: 'Invalid JSON in request body' 
       }, { status: 400 })
+    }
     
     // Validate required fields
     if (!productData.name || !productData.companyId) {
       return NextResponse.json({ 
         error: 'Product name and company ID are required' 
       }, { status: 400 })
-    
     }
+
     const newProduct = await createProduct(productData)
     return NextResponse.json(newProduct, { status: 201 })
   } catch (error: any) {
@@ -121,6 +139,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: error.message || 'Invalid request' 
       }, { status: 400 })
+    }
     
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
@@ -144,6 +163,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -153,12 +173,14 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
 
 export async function PUT(request: Request) {
@@ -171,18 +193,19 @@ export async function PUT(request: Request) {
       return NextResponse.json({ 
         error: 'Invalid JSON in request body' 
       }, { status: 400 })
+    }
     
     const { searchParams } = new URL(request.url)
     const productId = searchParams.get('productId')
     
     if (!productId) {
       return NextResponse.json({ error: 'Product ID is required' }, { status: 400 })
+    }
     
     // Use productData as updateData (already parsed above)
     const updateData = productData
     
     // If vendorId is provided in updateData, validate vendor ownership
-    }
     if (updateData.vendorId) {
       console.log(`[API] /api/products PUT - Validating vendor ownership for product ${productId}, vendor ${updateData.vendorId}`)
       
@@ -195,6 +218,7 @@ export async function PUT(request: Request) {
         return NextResponse.json({ 
           error: 'You do not have permission to update this product. It does not belong to your vendor.' 
         }, { status: 403 })
+      }
       
       // Remove vendorId from updateData before passing to updateProduct (vendors cannot change ownership)
       delete updateData.vendorId
@@ -227,6 +251,7 @@ export async function PUT(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -236,12 +261,14 @@ export async function PUT(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
 
 export async function DELETE(request: Request) {
@@ -251,6 +278,7 @@ export async function DELETE(request: Request) {
     
     if (!productId) {
       return NextResponse.json({ error: 'Product ID is required' }, { status: 400 })
+    }
     
     await deleteProduct(productId)
     return NextResponse.json({ success: true })
@@ -278,6 +306,7 @@ export async function DELETE(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -287,11 +316,12 @@ export async function DELETE(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
-

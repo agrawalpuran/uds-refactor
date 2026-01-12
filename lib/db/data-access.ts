@@ -64,6 +64,37 @@ if (!mongoose.models.Category) {
 }
 
 /**
+ * Helper function to get Company by ID (handles both ObjectId and string ID)
+ * This is the single source of truth for company lookups
+ */
+async function getCompanyByIdSafe(companyId: any): Promise<any> {
+  if (!companyId) {
+    return null
+  }
+  
+  // If it's already a string ID (6 digits), use it directly
+  if (typeof companyId === 'string' && /^\d{6}$/.test(companyId)) {
+    return await Company.findOne({ id: companyId })
+  }
+  
+  // If it's an ObjectId (object or 24-char hex string), look up by _id first
+  if (typeof companyId === 'object' || (typeof companyId === 'string' && mongoose.Types.ObjectId.isValid(companyId) && /^[0-9a-fA-F]{24}$/.test(companyId))) {
+    const objectId = typeof companyId === 'object' ? companyId : new mongoose.Types.ObjectId(companyId)
+    const companyByObjectId = await Company.findById(objectId).lean()
+    if (companyByObjectId && companyByObjectId.id) {
+      return await Company.findOne({ id: companyByObjectId.id })
+    }
+  }
+  
+  // Fallback: try as string ID
+  if (typeof companyId === 'string') {
+    return await Company.findOne({ id: companyId })
+  }
+  
+  return null
+}
+
+/**
  * Helper function to convert companyId from ObjectId to numeric ID
  * This is the single source of truth for companyId conversion
  */
@@ -2535,7 +2566,8 @@ export async function getLocationsByCompany(companyId: string): Promise<any[]> {
     return []
   }
   
-  const locations = await Location.find({ companyId: company._id })
+  // CRITICAL FIX: Location.companyId is stored as STRING ID, not ObjectId
+  const locations = await Location.find({ companyId: company.id })
     .populate('companyId', 'id name')
     .populate('adminId', 'id employeeId firstName lastName email')
     .sort({ name: 1 })
@@ -3055,7 +3087,8 @@ export async function getBranchesByCompany(companyId: string): Promise<any[]> {
   const company = await Company.findOne({ id: companyId })
   if (!company) return []
 
-  const branches = await Branch.find({ companyId: company._id })
+  // CRITICAL FIX: Branch.companyId is stored as STRING ID, not ObjectId
+  const branches = await Branch.find({ companyId: company.id })
     .populate('companyId', 'id name')
     .populate('adminId', 'id employeeId firstName lastName email designation')
     .lean()
@@ -3370,7 +3403,8 @@ export async function addCompanyAdmin(companyId: string, employeeId: string, can
     
     // If not found with encrypted lookup, try decryption matching (handles different encryption formats)
     if (!employee) {
-      const allEmployees = await Employee.find({ companyId: company._id }).populate('companyId').lean()
+      // CRITICAL FIX: Employee.companyId is stored as STRING ID, not ObjectId
+      const allEmployees = await Employee.find({ companyId: company.id }).populate('companyId').lean()
       console.log(`[addCompanyAdmin] Checking ${allEmployees.length} employees via decryption...`)
       for (const emp of allEmployees) {
         if (emp.email && typeof emp.email === 'string') {
@@ -3412,13 +3446,26 @@ export async function addCompanyAdmin(companyId: string, employeeId: string, can
   const employeeCompanyIdRaw = employeeRaw.companyId
   
   // Convert both to strings for comparison
-  const employeeCompanyIdStr = employeeCompanyIdRaw ? employeeCompanyIdRaw.toString() : null
-  const companyIdStr = company._id.toString()
+  // Handle both cases: employeeCompanyId might be stored as ObjectId or as string ID
+  let employeeCompanyIdStr: string | null = null
+  if (employeeCompanyIdRaw) {
+    if (typeof employeeCompanyIdRaw === 'object' && employeeCompanyIdRaw.toString) {
+      // It's an ObjectId - get the actual company ID by looking up the company
+      const employeeCompany = await Company.findById(employeeCompanyIdRaw).lean()
+      employeeCompanyIdStr = employeeCompany ? employeeCompany.id : null
+    } else {
+      // It's already a string ID
+      employeeCompanyIdStr = String(employeeCompanyIdRaw)
+    }
+  }
   
-  console.log(`[addCompanyAdmin] Debug - Employee: ${employeeId}, Employee companyId: ${employeeCompanyIdStr}, Company _id: ${companyIdStr}`)
+  // Compare using company.id (string) instead of company._id (ObjectId)
+  const companyIdStr = company.id
+  
+  console.log(`[addCompanyAdmin] Debug - Employee: ${employeeId}, Employee companyId: ${employeeCompanyIdStr}, Company id: ${companyIdStr}`)
   
   if (!employeeCompanyIdStr || employeeCompanyIdStr !== companyIdStr) {
-    console.error(`[addCompanyAdmin] Company mismatch - Employee companyId: ${employeeCompanyIdStr}, Company _id: ${companyIdStr}`)
+    console.error(`[addCompanyAdmin] Company mismatch - Employee companyId: ${employeeCompanyIdStr}, Company id: ${companyIdStr}`)
     // Don't auto-fix - throw error instead to prevent wrong assignments
     const employeeDisplayId = employeeRaw.employeeId || employeeRaw.id || employeeId
     throw new Error(`Employee ${employeeDisplayId} does not belong to company ${companyId} (${company.name}). Employee is associated with a different company. Please select an employee that belongs to ${company.name}.`)
@@ -3515,7 +3562,8 @@ export async function removeCompanyAdmin(companyId: string, employeeId: string):
   
   // Method 2: If not found, get all admins and match by ObjectId string comparison
   if (!result) {
-    const allAdmins = await CompanyAdmin.find({ companyId: company._id }).lean()
+    // CRITICAL FIX: CompanyAdmin.companyId is stored as STRING ID, not ObjectId
+    const allAdmins = await CompanyAdmin.find({ companyId: company.id }).lean()
     
     // Find matching admin by comparing ObjectId strings
     for (const adm of allAdmins) {
@@ -3536,7 +3584,8 @@ export async function removeCompanyAdmin(companyId: string, employeeId: string):
   // Method 3: If still not found, try to find by employee id/employeeId fields
   if (!result) {
     // Try to find admin where employeeId matches employee's id or employeeId
-    const allAdmins = await CompanyAdmin.find({ companyId: company._id })
+    // CRITICAL FIX: CompanyAdmin.companyId is stored as STRING ID, not ObjectId
+    const allAdmins = await CompanyAdmin.find({ companyId: company.id })
       .populate('employeeId', 'id employeeId')
       .lean()
     
@@ -3637,7 +3686,8 @@ export async function getCompanyAdmins(companyId: string): Promise<any[]> {
     return []
   }
   
-  const admins = await CompanyAdmin.find({ companyId: company._id })
+  // CRITICAL FIX: CompanyAdmin.companyId is stored as STRING ID, not ObjectId
+  const admins = await CompanyAdmin.find({ companyId: company.id })
     .populate({
       path: 'employeeId',
       select: 'id employeeId firstName lastName email',
@@ -5679,8 +5729,9 @@ export async function getEmployeesByCompany(companyId: string): Promise<any[]> {
   // OPTIMIZATION: Use indexed query directly instead of fetch-all + filter
   // This leverages the companyId index for O(log n) lookup instead of O(n) scan
   // Direct indexed query - much faster than fetch-all
-  console.log(`[getEmployeesByCompany] Querying employees with companyId: ${company._id}`)
-  const query = Employee.find({ companyId: company._id })
+  // CRITICAL FIX: Employee.companyId is stored as STRING ID, not ObjectId
+  console.log(`[getEmployeesByCompany] Querying employees with companyId: ${company.id} (string ID)`)
+  const query = Employee.find({ companyId: company.id })
     .populate('companyId', 'id name')
     .populate('locationId', 'id name address city state pincode')
     .populate('addressId') // Populate the Address record
@@ -6875,7 +6926,8 @@ export async function getOrdersByCompany(companyId: string): Promise<any[]> {
   const company = await Company.findOne({ id: companyId })
   if (!company) return []
 
-  const orders = await Order.find({ companyId: company._id })
+  // CRITICAL FIX: Order.companyId is stored as STRING ID, not ObjectId
+  const orders = await Order.find({ companyId: company.id })
     .populate('employeeId', 'id firstName lastName email locationId')
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
@@ -7634,7 +7686,8 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
   }
 
   // Get company ID
-  const company = await Company.findById(employee.companyId)
+  // Get company using safe helper
+  const company = await getCompanyByIdSafe(employee.companyId)
   if (!company) {
     // Fallback to employee-level eligibility (legacy format)
     const legacyEligibility = {
@@ -7842,8 +7895,8 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
     return { consumed: {}, shirt: 0, pant: 0, shoe: 0, jacket: 0 }
   }
 
-  // Get company
-  const company = await Company.findById(employee.companyId)
+  // Get company using safe helper
+  const company = await getCompanyByIdSafe(employee.companyId)
   if (!company) {
     return { consumed: {}, shirt: 0, pant: 0, shoe: 0, jacket: 0 }
   }
@@ -8011,7 +8064,8 @@ export async function validateEmployeeEligibility(
   }
   
   // Get company
-  const company = await Company.findById(employee.companyId)
+  // Get company using safe helper
+  const company = await getCompanyByIdSafe(employee.companyId)
   if (!company) {
     return {
       valid: false,
@@ -16742,7 +16796,8 @@ async function resetConsumedEligibilityForDesignation(
   const { decrypt } = require('../utils/encryption')
   
   // Find all employees with this company
-  const allEmployees = await Employee.find({ companyId: company._id })
+  // CRITICAL FIX: Employee.companyId is stored as STRING ID, not ObjectId
+  const allEmployees = await Employee.find({ companyId: company.id })
     .lean()
   
   const matchingEmployees: any[] = []
@@ -16885,7 +16940,8 @@ async function refreshEmployeeEligibilityForDesignation(
   const { encrypt, decrypt } = require('../utils/encryption')
   
   // Find all employees with this company
-  const allEmployees = await Employee.find({ companyId: company._id })
+  // CRITICAL FIX: Employee.companyId is stored as STRING ID, not ObjectId
+  const allEmployees = await Employee.find({ companyId: company.id })
     .lean()
   
   // Filter employees by designation (case-insensitive, handling encryption)
@@ -17059,11 +17115,8 @@ export async function getProductsForDesignation(
     return []
   }
   
-  // Get company ObjectId
-  let company = await Company.findOne({ id: companyId })
-  if (!company && mongoose.Types.ObjectId.isValid(companyId)) {
-    company = await Company.findById(companyId)
-  }
+  // Get company using safe helper
+  const company = await getCompanyByIdSafe(companyId)
   if (!company) {
     console.log(`[getProductsForDesignation] ⚠️ Company not found for companyId=${companyId}, returning empty array`)
     return []
@@ -17078,13 +17131,13 @@ export async function getProductsForDesignation(
   const genderFilter = gender === 'unisex' || !gender ? { $in: ['male', 'female', 'unisex'] } : gender
   
   console.log(`[getProductsForDesignation] Checking DesignationSubcategoryEligibility for:`)
-  console.log(`  - companyId: ${company._id}`)
+  console.log(`  - companyId: ${company.id}`)
   console.log(`  - designationId: "${normalizedDesignation}"`)
   console.log(`  - gender: ${JSON.stringify(genderFilter)}`)
   console.log(`  - status: 'active'`)
   
   const subcategoryEligibilities = await DesignationSubcategoryEligibility.find({
-    companyId: company._id,
+    companyId: company.id,
     designationId: normalizedDesignation,
     gender: genderFilter,
     status: 'active'
@@ -17125,9 +17178,10 @@ export async function getProductsForDesignation(
   // ============================================================
   // STEP 5: VERIFY SUBCATEGORIES EXIST AND BELONG TO COMPANY
   // ============================================================
+  // CRITICAL FIX: Subcategory.companyId is stored as STRING ID, not ObjectId
   const subcategories = await Subcategory.find({
     _id: { $in: subcategoryIds },
-    companyId: company._id,
+    companyId: company.id,
     status: 'active'
   }).lean()
   

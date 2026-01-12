@@ -1,3 +1,4 @@
+
 /**
  * POST /api/designation-subcategory-eligibilities/refresh
  * Refresh employee eligibility based on subcategory-based designation eligibility
@@ -17,9 +18,9 @@ import Company from '@/lib/models/Company'
 import { validateAndGetCompanyId } from '@/lib/utils/api-auth'
 import { decrypt } from '@/lib/utils/encryption'
 
-
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function POST(request: NextRequest) {
   try {
     await connectDB()
@@ -32,6 +33,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+
     const { companyId, designationId, gender = 'unisex' } = body
     
     if (!companyId || !designationId) {
@@ -39,18 +42,19 @@ export async function POST(request: NextRequest) {
         { error: 'companyId and designationId are required' },
         { status: 400 }
       )
+    }
     
     // Validate companyId from authenticated user context
     let validatedCompanyId: string
     try {
-    }
-    const authContext = await validateAndGetCompanyId(request, companyId)
+      const authContext = await validateAndGetCompanyId(request, companyId)
       validatedCompanyId = authContext.companyId
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
+    }
     
     // Get company - use string ID
     const company = await Company.findOne({ id: validatedCompanyId })
@@ -60,16 +64,15 @@ export async function POST(request: NextRequest) {
         { error: 'Company not found' },
         { status: 404 }
       )
+    }
     
     // Get all active designation-subcategory eligibilities - use string IDs
-    }
     const eligibilities = await DesignationSubcategoryEligibility.find({
       companyId: company.id,
       designationId: designationId.trim(),
       gender: gender === 'unisex' ? { $in: ['male', 'female', 'unisex'] } : gender,
       status: 'active'
-    })
-      .lean()
+    }).lean()
     
     if (eligibilities.length === 0) {
       return NextResponse.json({
@@ -77,27 +80,40 @@ export async function POST(request: NextRequest) {
         message: `No active eligibility rules found for designation "${designationId}" and gender "${gender}"`,
         employeesUpdated: 0
       })
+    }
     
     // Get all subcategory string IDs
     const subcategoryIds = eligibilities
       .map(e => String(e.subCategoryId))
       .filter(Boolean)
     
-    // Get all subcategories with their parent categories - use string IDs
-    }
+    // CRITICAL FIX: parentCategoryId is stored as STRING ID, not ObjectId - cannot use populate
+    // Get all subcategories - use string IDs
     const subcategories = await Subcategory.find({
       id: { $in: subcategoryIds },
       companyId: company.id,
       status: 'active'
     })
-      .populate('parentCategoryId', 'id name')
+      .select('id name parentCategoryId')
       .lean()
     
-    // Create a map: subcategoryId -> subcategory data - use string IDs
-    const subcategoryMapById = new Map()
+    // Manually fetch parent categories
+    const uniqueParentCategoryIds = [...new Set(subcategories.map((s: any) => s.parentCategoryId).filter(Boolean))]
+    const parentCategories = await Category.find({ id: { $in: uniqueParentCategoryIds } })
+      .select('id name')
+      .lean()
+    const parentCategoryMap = new Map(parentCategories.map((c: any) => [c.id, c]))
+    
+    // Create a map: subcategoryId -> subcategory data with parent category - use string IDs
+    const subcategoryMapById = new Map<string, any>()
     for (const subcat of subcategories) {
       const subcatId = (subcat as any).id
-      subcategoryMapById.set(subcatId, subcat)
+      const parentCategory = (subcat as any).parentCategoryId ? parentCategoryMap.get((subcat as any).parentCategoryId) : null
+      subcategoryMapById.set(subcatId, {
+        ...subcat,
+        parentCategoryId: parentCategory ? parentCategory.id : (subcat as any).parentCategoryId,
+        parentCategory
+      })
     }
     
     // Aggregate eligibility by parent category
@@ -107,8 +123,8 @@ export async function POST(request: NextRequest) {
       const subcatId = String(elig.subCategoryId)
       const subcat = subcategoryMapById.get(subcatId)
       
-      if (subcat && (subcat as any).parentCategoryId) {
-        const parentCategory = (subcat as any).parentCategoryId
+      if (subcat && subcat.parentCategory) {
+        const parentCategory = subcat.parentCategory
         const categoryName = parentCategory.name?.toLowerCase() || ''
         
         // Map category name to legacy format (shirt, pant, shoe, jacket)
@@ -164,18 +180,18 @@ export async function POST(request: NextRequest) {
         message: `No employees found with designation "${designationId}" and gender "${gender || 'all'}"`,
         employeesUpdated: 0
       })
+    }
     
     // Update employee eligibility
     let updatedCount = 0
     for (const emp of matchingEmployees) {
       try {
         // Use string ID to find employee
-    }
-    const employee = await Employee.findOne({ id: emp.id || emp.employeeId })
-    if (!employee) {
-      return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
-    }
-    if (employee) {
+        const employee = await Employee.findOne({ id: emp.id || emp.employeeId })
+        if (!employee) {
+          return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+        }
+        if (employee) {
           // Reset eligibility to defaults
           employee.eligibility = {
             shirt: 0,
@@ -237,6 +253,7 @@ export async function POST(request: NextRequest) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -246,6 +263,7 @@ export async function POST(request: NextRequest) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -255,6 +273,7 @@ export async function POST(request: NextRequest) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -286,4 +305,3 @@ function mapCategoryNameToLegacy(categoryName: string): string | null {
   
   return null
 }
-

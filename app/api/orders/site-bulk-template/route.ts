@@ -152,34 +152,38 @@ export async function GET(request: NextRequest) {
     }>()
 
     // Get all active subcategory eligibilities for this company
+    // CRITICAL FIX: subCategoryId is stored as STRING ID, not ObjectId - cannot use populate
     const allEligibilities = await DesignationSubcategoryEligibility.find({
       companyId: companyId,
       status: 'active'
-    })
-      .populate('subCategoryId', 'id name parentCategoryId')
-      .lean()
+    }).lean()
 
     const eligibleSubcategoryIds = new Set<string>()
     allEligibilities.forEach((elig: any) => {
-      // Use string ID from subcategory
-      const subcatId = elig.subCategoryId?.id || String(elig.subCategoryId)
+      // Use string ID directly
+      const subcatId = String(elig.subCategoryId)
       if (subcatId) {
         eligibleSubcategoryIds.add(subcatId)
       }
     })
 
     // Get all product-subcategory mappings for eligible subcategories - use string IDs
+    // CRITICAL FIX: subCategoryId is stored as STRING ID, not ObjectId - cannot use populate
     const productMappings = await ProductSubcategoryMapping.find({
       subCategoryId: { $in: Array.from(eligibleSubcategoryIds) },
       companyId: String(companyId)
-    })
-      .populate('subCategoryId', 'id name parentCategoryId')
-      .lean()
+    }).lean()
+    
+    // Manually fetch subcategories using string IDs
+    const subcategories = await Subcategory.find({
+      id: { $in: Array.from(eligibleSubcategoryIds) }
+    }).select('id name parentCategoryId').lean()
+    const subcategoryMap = new Map(subcategories.map((s: any) => [s.id, s]))
 
     // Get all product string IDs from mappings
     const productIds = new Set<string>()
     productMappings.forEach((mapping: any) => {
-      const productId = mapping.productId?.id || String(mapping.productId)
+      const productId = String(mapping.productId)
       if (productId) {
         productIds.add(productId)
       }
@@ -195,11 +199,12 @@ export async function GET(request: NextRequest) {
     for (const product of products) {
       const productId = (product as any).id
       const subcategoryMapping = productMappings.find((m: any) => 
-        (m.productId?.id || String(m.productId)) === productId
+        String(m.productId) === productId
       )
       
       if (subcategoryMapping) {
-        const subcategoryName = subcategoryMapping.subCategoryId?.name || 'N/A'
+        const subcategory = subcategoryMap.get(String(subcategoryMapping.subCategoryId))
+        const subcategoryName = subcategory?.name || 'N/A'
         
         // Get vendor name - use string product ID
         const productVendor: any = await ProductVendor.findOne({ productId: productId }).populate('vendorId', 'name').lean()

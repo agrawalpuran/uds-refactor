@@ -1,3 +1,4 @@
+
 import { NextResponse } from 'next/server'
 import connectDB from '@/lib/db/mongodb'
 import Branch from '@/lib/models/Branch'
@@ -11,6 +12,7 @@ import mongoose from 'mongoose'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ branchId: string }> }
@@ -41,50 +43,45 @@ export async function GET(
       ],
       status: 'active'
     })
-    .limit(limit)
-    .select('_id id employeeId firstName lastName email')
-    .lean()
+      .limit(limit)
+      .select('_id id employeeId firstName lastName email')
+      .lean()
 
     return NextResponse.json(employees)
   } catch (error: any) {
     console.error('API Error in /api/branches/[branchId]/employees GET:', error)
-    console.error('API Error in /api/branches/[branchId]/employees GET:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
-    if (errorMessage.includes('required') ||
-        errorMessage.includes('invalid') ||
-        errorMessage.includes('missing') ||
-        errorMessage.includes('Invalid JSON')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 400 }
-      )
+    if (
+      errorMessage.includes('required') ||
+      errorMessage.includes('invalid') ||
+      errorMessage.includes('missing') ||
+      errorMessage.includes('Invalid JSON')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 400 })
     }
     
     // Return 404 for not found errors
-    if (errorMessage.includes('not found') || 
-        errorMessage.includes('Not found') || 
-        errorMessage.includes('does not exist')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 404 }
-      )
+    if (
+      errorMessage.includes('not found') || 
+      errorMessage.includes('Not found') || 
+      errorMessage.includes('does not exist')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 404 })
     }
     
     // Return 401 for authentication errors
-    if (errorMessage.includes('Unauthorized') ||
-        errorMessage.includes('authentication') ||
-        errorMessage.includes('token')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 401 }
-      )
+    if (
+      errorMessage.includes('Unauthorized') ||
+      errorMessage.includes('authentication') ||
+      errorMessage.includes('token')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 401 })
     }
     
     // Return 500 for server errors
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
   }
+}
+``

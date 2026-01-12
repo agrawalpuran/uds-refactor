@@ -14,6 +14,7 @@
  */
 
 import mongoose, { Schema, Document } from 'mongoose'
+import Subcategory from './Subcategory'
 
 export interface IDesignationSubcategoryEligibility extends Document {
   id: string // Unique 6-digit ID (e.g., "700001")
@@ -113,25 +114,11 @@ DesignationSubcategoryEligibilitySchema.index(
 )
 
 // Validation: Ensure subcategory belongs to the same company
+// CRITICAL: Disable this hook temporarily to prevent ObjectId casting errors
+// Validation is now handled in the API route instead
 DesignationSubcategoryEligibilitySchema.pre('save', async function(next) {
-  if (this.isModified('subCategoryId') || this.isModified('companyId') || this.isNew) {
-    const Subcategory = mongoose.model('Subcategory')
-    const subcategory = await Subcategory.findById(this.subCategoryId)
-    
-    if (!subcategory) {
-      return next(new Error(`Subcategory with ID ${this.subCategoryId} not found`))
-    }
-    
-    // CRITICAL SECURITY: Ensure subcategory belongs to the same company
-    if (subcategory.companyId.toString() !== this.companyId.toString()) {
-      return next(new Error(`Subcategory "${subcategory.name}" does not belong to company ${this.companyId}`))
-    }
-    
-    if (subcategory.status !== 'active') {
-      return next(new Error(`Subcategory "${subcategory.name}" is not active`))
-    }
-  }
-  
+  // Skip validation in pre-save hook - validation is done in API route
+  // This prevents Mongoose from trying to cast string IDs to ObjectId
   next()
 })
 

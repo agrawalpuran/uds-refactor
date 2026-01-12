@@ -42,8 +42,8 @@ export async function GET(request: Request) {
         { error: 'Vendor ID is required. Please ensure you are logged in as a vendor.' },
         { status: 401 }
       )
-
     }
+
     const { searchParams } = new URL(request.url)
     const isActive = searchParams.get('isActive')
     const isPrimary = searchParams.get('isPrimary')
@@ -74,6 +74,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -83,6 +84,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -92,6 +94,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -115,7 +118,8 @@ export async function POST(request: Request) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
-    
+    }
+
     // Get vendorId from query param, header, or body
     const vendorId = getVendorIdFromRequest(request) || body.vendorId
     
@@ -124,8 +128,8 @@ export async function POST(request: Request) {
         { error: 'Vendor ID is required. Please ensure you are logged in as a vendor.' },
         { status: 401 }
       )
-    
     }
+
     const {
       warehouseName,
       addressLine1,
@@ -145,14 +149,15 @@ export async function POST(request: Request) {
         { error: 'warehouseName, addressLine1, city, state, and pincode are required' },
         { status: 400 }
       )
+    }
 
     // Validate pincode format
-    }
     if (!/^\d{6}$/.test(pincode)) {
       return NextResponse.json(
         { error: 'Pincode must be exactly 6 digits' },
         { status: 400 }
       )
+    }
 
     console.log('[API /vendor/warehouses POST] Creating warehouse for vendor:', vendorId)
 
@@ -193,6 +198,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -202,6 +208,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -211,6 +218,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -219,4 +227,3 @@ export async function POST(request: Request) {
     )
   }
 }
-

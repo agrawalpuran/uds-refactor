@@ -31,32 +31,34 @@ export async function GET(request: Request) {
     // Get location by admin email
     if (getByAdminEmail && email) {
       const location = await getLocationByAdminEmail(email)
-    if (!location) {
-      return NextResponse.json({ error: 'Location not found' }, { status: 404 })
-    }
-    // Return 200 with null instead of 404 - 404 is expected when user is not a location admin
+      if (!location) {
+        return NextResponse.json({ error: 'Location not found' }, { status: 404 })
+      }
+      // Return 200 with null instead of 404 - 404 is expected when user is not a location admin
       // This prevents console errors for normal cases
       return NextResponse.json(location || null, { status: 200 })
-
+    }
     // Get specific location
     if (locationId) {
       const location = await getLocationById(locationId)
       if (!location) {
         return NextResponse.json({ error: 'Location not found' }, { status: 404 })
+      }
       return NextResponse.json(location)
-
+    }
     // Get locations for a company
     if (companyId) {
       // Verify authorization if email provided
       if (email) {
         const isAdmin = await isCompanyAdmin(email, companyId)
-    }
-    if (!isAdmin) {
+        if (!isAdmin) {
           return NextResponse.json({ error: 'Unauthorized: Company Admin access required' }, { status: 403 })
+        }
       }
       
       const locations = await getLocationsByCompany(companyId)
       return NextResponse.json(locations)
+    }
 
     // Get all locations (Super Admin only - no auth check here, should be done at UI level)
     const locations = await getAllLocations()
@@ -74,12 +76,13 @@ export async function GET(request: Request) {
       return NextResponse.json({ 
         error: error.message || 'Invalid request' 
       }, { status: 400 })
+    }
     
     if (error.message && error.message.includes('Unauthorized')) {
       return NextResponse.json({ 
         error: error.message || 'Unauthorized' 
       }, { status: 401 })
-    
+    }
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     const isConnectionError = errorMessage.includes('Mongo') || 
@@ -102,7 +105,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
-    
+    }
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
         errorMessage.includes('authentication') ||
@@ -111,12 +114,13 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
-    
+    }    
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
 
 /**
@@ -135,6 +139,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: 'Invalid JSON in request body' 
       }, { status: 400 })
+    }
     
     const { name, companyId, adminId, adminEmail, email, address, city, state, pincode, phone, locationEmail, status } = body
 
@@ -143,18 +148,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: 'Missing required fields: name and companyId are required' 
       }, { status: 400 })
+    }
     
     // Validate parameter formats
-    }
     if (typeof name !== 'string' || name.trim() === '') {
       return NextResponse.json({ 
         error: 'Invalid name format' 
       }, { status: 400 })
+    }
     
     if (typeof companyId !== 'string' || companyId.trim() === '') {
       return NextResponse.json({ 
         error: 'Invalid company ID format' 
       }, { status: 400 })
+    }
     
     // Use adminEmail from body or email parameter
     const userEmail = adminEmail || email
@@ -162,13 +169,14 @@ export async function POST(request: Request) {
     // Verify authorization: user must be Company Admin
     if (!userEmail) {
       return NextResponse.json({ error: 'Email is required for authorization' }, { status: 401 })
+    }
 
     const isAdmin = await isCompanyAdmin(userEmail, companyId)
-    }
     if (!isAdmin) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only Company Admins can create locations' 
       }, { status: 403 })
+    }
 
     // Create location (adminId is optional)
     const location = await createLocation({
@@ -198,11 +206,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ 
         error: error.message || 'Invalid request' 
       }, { status: 400 })
+    }
     
     if (error.message && error.message.includes('Unauthorized')) {
       return NextResponse.json({ 
         error: error.message || 'Unauthorized' 
       }, { status: 401 })
+    }
     
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
@@ -226,6 +236,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -235,12 +246,14 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
 
 /**
@@ -259,6 +272,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ 
         error: 'Invalid JSON in request body' 
       }, { status: 400 })
+    }
     
     // Extract adminEmail for authorization (logged-in user's email)
     // email in updateFields is the location's contact email
@@ -266,19 +280,21 @@ export async function PATCH(request: Request) {
 
     if (!locationId) {
       return NextResponse.json({ error: 'Location ID is required' }, { status: 400 })
+    }
     
     // Validate parameter format
-    }
     if (typeof locationId !== 'string' || locationId.trim() === '') {
       return NextResponse.json({ 
         error: 'Invalid location ID format' 
       }, { status: 400 })
+    }
 
     // Use adminEmail for authorization (logged-in user's email)
     const userEmail = adminEmail?.trim().toLowerCase()
     if (!userEmail) {
       console.error('[PATCH /locations] Missing adminEmail:', { adminEmail, email, body })
       return NextResponse.json({ error: 'Admin email is required for authorization' }, { status: 401 })
+    }
 
     console.log('[PATCH /locations] Request received:', { locationId, userEmail: adminEmail, hasAdminEmail: !!adminEmail, hasLocationEmail: !!email })
 
@@ -287,12 +303,12 @@ export async function PATCH(request: Request) {
     if (!location) {
       console.error('[PATCH /locations] Location not found:', locationId)
       return NextResponse.json({ error: 'Location not found' }, { status: 404 })
+    }
 
     // Extract companyId - handle both populated and non-populated cases
     let companyId: string | null = null
     if (location.companyId) {
-    }
-    if (typeof location.companyId === 'object' && location.companyId !== null) {
+      if (typeof location.companyId === 'object' && location.companyId !== null) {
         // Populated: { _id: ObjectId, id: '100001', name: '...' }
         companyId = location.companyId.id || null
       } else if (typeof location.companyId === 'string') {
@@ -306,6 +322,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ 
         error: 'Location has no associated company'
       }, { status: 400 })
+    }
 
     console.log('[PATCH /locations] Authorization check:', { userEmail, companyId, locationId })
     const isAdmin = await isCompanyAdmin(userEmail, companyId)
@@ -321,6 +338,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only Company Admins can update locations' 
       }, { status: 403 })
+    }
     
     console.log('[PATCH /locations] Authorization successful, proceeding with update')
 
@@ -330,6 +348,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json(updated)
   } catch (error: any) {
     console.error('API Error:', error)
+    
     
     // Return 400 for validation/input errors, 401 for auth errors, 500 for server errors
     if (error.message && (
@@ -346,6 +365,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ 
         error: error.message || 'Unauthorized' 
       }, { status: 401 })
+    }
     
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
@@ -369,6 +389,7 @@ export async function PATCH(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -378,12 +399,15 @@ export async function PATCH(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
+}
 }
 
 /**
@@ -403,14 +427,15 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ 
         error: 'Location ID, admin email, and company ID are required' 
       }, { status: 400 })
+    }
 
     // Verify authorization: user must be Company Admin
     const isAdmin = await isCompanyAdmin(adminEmail, companyId)
-    }
     if (!isAdmin) {
       return NextResponse.json({ 
         error: 'Unauthorized: Only Company Admins can delete locations' 
       }, { status: 403 })
+    }
 
     // Delete location
     await deleteLocation(locationId)
@@ -428,11 +453,13 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ 
         error: error.message || 'Invalid request' 
       }, { status: 400 })
+    }
     
     if (error.message && error.message.includes('Unauthorized')) {
       return NextResponse.json({ 
         error: error.message || 'Unauthorized' 
       }, { status: 401 })
+    }
     
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
@@ -456,6 +483,7 @@ export async function DELETE(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -465,11 +493,13 @@ export async function DELETE(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
 

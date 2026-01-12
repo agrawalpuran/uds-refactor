@@ -1,9 +1,10 @@
+
 import { NextResponse } from 'next/server'
 import { createReturnRequest, validateReturnEligibility } from '@/lib/db/data-access'
 
-
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function POST(request: Request) {
   try {
     // Parse JSON body with error handling
@@ -15,6 +16,7 @@ export async function POST(request: Request) {
         error: 'Invalid JSON in request body'
       }, { status: 400 })
     }
+
     const {
       originalOrderId,
       originalOrderItemIndex,
@@ -27,9 +29,18 @@ export async function POST(request: Request) {
     } = body
 
     // Validate required fields
-    if (!originalOrderId || originalOrderItemIndex === undefined || !requestedQty || !requestedSize || !requestedBy) {
+    if (
+      !originalOrderId ||
+      originalOrderItemIndex === undefined ||
+      !requestedQty ||
+      !requestedSize ||
+      !requestedBy
+    ) {
       return NextResponse.json(
-        { error: 'Missing required fields: originalOrderId, originalOrderItemIndex, requestedQty, requestedSize, requestedBy' },
+        {
+          error:
+            'Missing required fields: originalOrderId, originalOrderItemIndex, requestedQty, requestedSize, requestedBy'
+        },
         { status: 400 }
       )
     }
@@ -71,6 +82,7 @@ export async function GET(request: Request) {
         { status: 400 }
       )
     }
+
     const validation = await validateReturnEligibility(
       orderId,
       parseInt(itemIndex),
@@ -86,3 +98,4 @@ export async function GET(request: Request) {
       { status: 400 }
     )
   }
+}

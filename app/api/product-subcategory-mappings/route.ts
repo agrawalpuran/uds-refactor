@@ -11,6 +11,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import connectDB from '@/lib/db/mongodb'
 import ProductSubcategoryMapping from '@/lib/models/ProductSubcategoryMapping'
 import Subcategory from '@/lib/models/Subcategory'
+import Category from '@/lib/models/Category'
+import Uniform from '@/lib/models/Uniform'
 import { validateAndGetCompanyId } from '@/lib/utils/api-auth'
 import mongoose from 'mongoose'
 
@@ -21,6 +23,7 @@ import mongoose from 'mongoose'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB()
@@ -49,15 +52,16 @@ export async function GET(request: NextRequest) {
             { error: 'Unauthorized: No user email provided' },
             { status: 401 }
           )
+        }
         
         // Get employee and validate they belong to the requested company
         const employee = await getEmployeeByEmail(userEmail)
-    }
-    if (!employee) {
+        if (!employee) {
           return NextResponse.json(
             { error: 'Unauthorized: User is not an employee' },
             { status: 401 }
           )
+        }
         
         // Extract companyId from employee
         let employeeCompanyId: string | undefined
@@ -76,14 +80,15 @@ export async function GET(request: NextRequest) {
             { error: 'Unauthorized: Employee has no company assigned' },
             { status: 401 }
           )
+        }
         
         // Validate requested companyId matches employee's company
-    }
-    if (companyId && companyId !== employeeCompanyId) {
+        if (companyId && companyId !== employeeCompanyId) {
           return NextResponse.json(
             { error: 'Forbidden: Cannot access mappings for other companies' },
             { status: 403 }
           )
+        }
         
         validatedCompanyId = employeeCompanyId
       } catch (employeeError: any) {
@@ -92,6 +97,7 @@ export async function GET(request: NextRequest) {
           { error: 'Unauthorized: User is not a Company Admin or Employee' },
           { status: 401 }
         )
+      }
     }
     
     // Get company - use string ID
@@ -103,9 +109,9 @@ export async function GET(request: NextRequest) {
         { error: 'Company not found' },
         { status: 404 }
       )
+    }
     
     // Build query - use string IDs
-    }
     const query: any = {
       companyId: company.id
     }
@@ -114,77 +120,74 @@ export async function GET(request: NextRequest) {
       // Try to find product by string id field
       const Uniform = mongoose.model('Uniform')
       const product = await Uniform.findOne({ id: productId })
-    if (!product) {
-      return NextResponse.json({ error: 'Uniform not found' }, { status: 404 })
-    }
-    if (product) {
-        query.productId = product.id
-      } else {
-        return NextResponse.json(
-          { error: 'Product not found' },
-          { status: 404 }
-        )
+      if (!product) {
+        return NextResponse.json({ error: 'Uniform not found' }, { status: 404 })
+      }
+      query.productId = product.id
     }
     
     if (subCategoryId) {
       // Use string ID for subcategory
       const subcategory = await Subcategory.findOne({ id: subCategoryId })
-    if (!subcategory) {
-      return NextResponse.json({ error: 'Subcategory not found' }, { status: 404 })
-    }
-    if (subcategory) {
-        query.subCategoryId = subcategory.id
-      } else {
-        return NextResponse.json(
-          { error: 'Subcategory not found' },
-          { status: 404 }
-        )
+      if (!subcategory) {
+        return NextResponse.json({ error: 'Subcategory not found' }, { status: 404 })
+      }
+      query.subCategoryId = subcategory.id
     }
     
-    const mappings = await ProductSubcategoryMapping.find(query)
-      .populate('productId', 'id name category categoryId gender price image sku')
-      .populate('subCategoryId', 'id name parentCategoryId')
-      .populate({
-        path: 'subCategoryId',
-        populate: {
-          path: 'parentCategoryId',
-          select: 'id name isSystemCategory'
-        }
-      })
+    // CRITICAL FIX: productId and subCategoryId are stored as STRING IDs, not ObjectIds - cannot use populate
+    const mappings = await ProductSubcategoryMapping.find(query).lean()
+    
+    // Manually fetch products using string IDs
+    const uniqueProductIds = [...new Set(mappings.map((m: any) => m.productId).filter(Boolean))]
+    const products = await Uniform.find({ id: { $in: uniqueProductIds } })
+      .select('id name category categoryId gender price image sku')
       .lean()
+    const productMap = new Map(products.map((p: any) => [p.id, p]))
+    
+    // Manually fetch subcategories using string IDs
+    const uniqueSubcategoryIds = [...new Set(mappings.map((m: any) => m.subCategoryId).filter(Boolean))]
+    const subcategories = await Subcategory.find({ id: { $in: uniqueSubcategoryIds } })
+      .select('id name parentCategoryId')
+      .lean()
+    const subcategoryMap = new Map(subcategories.map((s: any) => [s.id, s]))
+    
+    // Manually fetch parent categories
+    const uniqueParentCategoryIds = [...new Set(subcategories.map((s: any) => s.parentCategoryId).filter(Boolean))]
+    const parentCategories = await Category.find({ id: { $in: uniqueParentCategoryIds } })
+      .select('id name isSystemCategory')
+      .lean()
+    const parentCategoryMap = new Map(parentCategories.map((c: any) => [c.id, c]))
     
     return NextResponse.json({
       success: true,
       mappings: mappings.map((mapping: any) => {
-        // CRITICAL FIX: Use string 'id' fields instead of ObjectId '_id' for productId and subCategoryId
-        // This ensures UI can match saved mappings with displayed products/subcategories
-        const productId = mapping.productId?.id || 
-                         (mapping.productId?._id?.toString())
-        const subCategoryId = mapping.subCategoryId?.id || 
-                             (mapping.subCategoryId?._id?.toString())
+        const product = productMap.get(mapping.productId)
+        const subcategory = subcategoryMap.get(mapping.subCategoryId)
+        const parentCategory = subcategory?.parentCategoryId ? parentCategoryMap.get(subcategory.parentCategoryId) : null
         
         return {
           id: mapping.id,
-          productId: productId, // Use string 'id' field
-          product: mapping.productId ? {
-            id: (mapping.productId as any).id,
-            name: (mapping.productId as any).name,
-            category: (mapping.productId as any).category,
-            categoryId: String((mapping.productId as any).categoryId || ''),
-            gender: (mapping.productId as any).gender,
-            price: (mapping.productId as any).price,
-            image: (mapping.productId as any).image,
-            sku: (mapping.productId as any).sku
+          productId: mapping.productId,
+          product: product ? {
+            id: product.id,
+            name: product.name,
+            category: product.category,
+            categoryId: product.categoryId || '',
+            gender: product.gender,
+            price: product.price,
+            image: product.image,
+            sku: product.sku
           } : null,
-          subCategoryId: subCategoryId, // Use string 'id' field
-          subcategory: mapping.subCategoryId ? {
-            id: (mapping.subCategoryId as any).id,
-            name: (mapping.subCategoryId as any).name,
-            parentCategoryId: String((mapping.subCategoryId as any).parentCategoryId?.id || (mapping.subCategoryId as any).parentCategoryId || ''),
-            parentCategory: (mapping.subCategoryId as any).parentCategoryId ? {
-              id: (mapping.subCategoryId as any).parentCategoryId.id,
-              name: (mapping.subCategoryId as any).parentCategoryId.name,
-              isSystemCategory: (mapping.subCategoryId as any).parentCategoryId.isSystemCategory
+          subCategoryId: mapping.subCategoryId,
+          subcategory: subcategory ? {
+            id: subcategory.id,
+            name: subcategory.name,
+            parentCategoryId: subcategory.parentCategoryId || '',
+            parentCategory: parentCategory ? {
+              id: parentCategory.id,
+              name: parentCategory.name,
+              isSystemCategory: parentCategory.isSystemCategory
             } : null
           } : null,
           companyId: String(mapping.companyId),
@@ -213,6 +216,7 @@ export async function GET(request: NextRequest) {
       { error: error.message || 'Failed to fetch mappings' },
       { status: 500 }
     )
+  }
 }
 
 /**
@@ -230,6 +234,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+
     const { companyId, productId, subCategoryId, companySpecificPrice } = body
     
     if (!productId || !subCategoryId) {
@@ -237,18 +243,19 @@ export async function POST(request: NextRequest) {
         { error: 'productId and subCategoryId are required' },
         { status: 400 }
       )
+    }
     
     // Validate companyId from authenticated user context
     let validatedCompanyId: string
     try {
-    }
-    const authContext = await validateAndGetCompanyId(request, companyId)
+      const authContext = await validateAndGetCompanyId(request, companyId)
       validatedCompanyId = authContext.companyId
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
+    }
     
     // Get company - use string ID
     const Company = mongoose.model('Company')
@@ -259,10 +266,10 @@ export async function POST(request: NextRequest) {
         { error: 'Company not found' },
         { status: 404 }
       )
+    }
     
     // Get product - use string ID
     const Uniform = mongoose.model('Uniform')
-    }
     const product = await Uniform.findOne({ id: productId })
     
     if (!product) {
@@ -270,9 +277,9 @@ export async function POST(request: NextRequest) {
         { error: 'Product not found' },
         { status: 404 }
       )
+    }
     
     // Get subcategory - use string ID and validate it belongs to the company
-    }
     const subcategory = await Subcategory.findOne({ id: subCategoryId })
     
     if (!subcategory) {
@@ -280,23 +287,24 @@ export async function POST(request: NextRequest) {
         { error: 'Subcategory not found' },
         { status: 404 }
       )
+    }
     
     // CRITICAL SECURITY CHECK: Ensure subcategory belongs to the company - use string IDs
-    }
     if (String(subcategory.companyId) !== company.id) {
       return NextResponse.json(
         { error: 'Subcategory does not belong to the specified company' },
         { status: 403 }
       )
+    }
     
     if (subcategory.status !== 'active') {
       return NextResponse.json(
         { error: 'Subcategory is not active' },
         { status: 400 }
       )
+    }
     
     // Check if mapping already exists - use string IDs
-    }
     const existing = await ProductSubcategoryMapping.findOne({
       productId: product.id,
       subCategoryId: subcategory.id,
@@ -313,6 +321,7 @@ export async function POST(request: NextRequest) {
         { error: 'Product-subcategory mapping already exists for this company' },
         { status: 409 }
       )
+    }
     
     // Log before creation for debugging
     console.log('[POST /product-subcategory-mappings] Creating mapping:', {
@@ -384,15 +393,16 @@ export async function POST(request: NextRequest) {
         { error: 'Product-subcategory mapping already exists for this company' },
         { status: 409 }
       )
+    }
     
     // Handle validation errors from pre-save hook
-    }
     if (error.name === 'ValidationError' || error.message?.includes('Subcategory')) {
       console.error('[POST /product-subcategory-mappings] Validation error from pre-save hook:', error.message)
       return NextResponse.json(
         { error: error.message || 'Validation failed: Subcategory validation error' },
         { status: 400 }
       )
+    }
     
     // Return detailed error for debugging (in production, you might want to sanitize this)
     return NextResponse.json(
@@ -406,6 +416,7 @@ export async function POST(request: NextRequest) {
       },
       { status: 500 }
     )
+  }
 }
 
 /**
@@ -424,17 +435,12 @@ export async function DELETE(request: NextRequest) {
         { error: 'mappingId is required' },
         { status: 400 }
       )
+    }
     
     // Find mapping - use string ID only
     // Note: mappingId should be the _id as string for backward compatibility with existing UI
     // But we'll try id field first, then _id if needed
-    }
     let mapping = await ProductSubcategoryMapping.findOne({ id: mappingId })
-    if (!mapping) {
-      return NextResponse.json({ error: 'ProductSubcategoryMapping not found' }, { status: 404 })
-    
-    // If not found by id, try _id (for backward compatibility with existing mapping IDs)
-    }
     if (!mapping && mongoose.Types.ObjectId.isValid(mappingId)) {
       mapping = await ProductSubcategoryMapping.findById(mappingId)
     }
@@ -444,33 +450,34 @@ export async function DELETE(request: NextRequest) {
         { error: 'Mapping not found' },
         { status: 404 }
       )
+    }
     
     // Validate companyId from authenticated user context and ensure mapping belongs to user's company
     try {
       const authContext = await validateAndGetCompanyId(request)
       // Compare string IDs directly
       const mappingCompanyId = String(mapping.companyId)
-    }
-    if (mappingCompanyId !== authContext.companyId) {
+      if (mappingCompanyId !== authContext.companyId) {
         return NextResponse.json(
           { error: 'Forbidden: Mapping does not belong to your company' },
           { status: 403 }
         )
+      }
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
+    }
     
     // Delete mapping - use string ID
-    await ProductSubcategoryMapping.deleteOne({ id: mapping.id })
+    await ProductSubcategoryMapping.deleteOne({ id: (mapping as any).id })
     
     return NextResponse.json({
       success: true,
       message: 'Product-subcategory mapping deleted successfully'
     })
   } catch (error: any) {
-    console.error('Error deleting product-subcategory mapping:', error)
     console.error('Error deleting product-subcategory mapping:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
@@ -483,6 +490,7 @@ export async function DELETE(request: NextRequest) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -492,6 +500,7 @@ export async function DELETE(request: NextRequest) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -501,11 +510,12 @@ export async function DELETE(request: NextRequest) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
-

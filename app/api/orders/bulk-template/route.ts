@@ -156,50 +156,65 @@ export async function GET(request: NextRequest) {
 
     // Get all product-subcategory mappings for eligible subcategories
     if (eligibleSubcategoryIds.size > 0) {
+      // CRITICAL FIX: productId and subCategoryId are stored as STRING IDs, not ObjectIds - cannot use populate
       const productMappings = await ProductSubcategoryMapping.find({
         subCategoryId: { $in: Array.from(eligibleSubcategoryIds) },
         companyId: company.id
-      })
-        .populate('productId', 'id name sku vendorId')
-        .populate('subCategoryId', 'id name')
-        .lean()
+      }).lean()
 
-      // Get all unique product string IDs to fetch vendor info
+      // Get all unique product string IDs
       const productIds = new Set<string>()
       productMappings.forEach((m: any) => {
-        const productId = m.productId?.id || String(m.productId)
-        if (productId) {
-          productIds.add(productId)
+        if (m.productId) {
+          productIds.add(String(m.productId))
         }
       })
 
-      // Fetch products with vendor info using string IDs
+      // Manually fetch products and subcategories using string IDs
       const products = await Uniform.find({
         id: { $in: Array.from(productIds) }
+      }).select('id name sku vendorId').lean()
+      const productMap = new Map(products.map((p: any) => [p.id, p]))
+      
+      const subcategories = await Subcategory.find({
+        id: { $in: Array.from(eligibleSubcategoryIds) }
+      }).select('id name').lean()
+      const subcategoryMap = new Map(subcategories.map((s: any) => [s.id, s]))
+
+      // Get all unique vendor IDs and fetch vendors
+      const vendorIds = new Set<string>()
+      products.forEach((p: any) => {
+        if (p.vendorId) {
+          vendorIds.add(String(p.vendorId))
+        }
       })
-        .populate('vendorId', 'id name')
+      const Vendor = mongoose.model('Vendor')
+      const vendors = await Vendor.find({ id: { $in: Array.from(vendorIds) } })
+        .select('id name')
         .lean()
+      const vendorMap = new Map(vendors.map((v: any) => [v.id, v]))
 
       // Create a map of productId -> vendor name
       const productVendorMap = new Map<string, string>()
       products.forEach((p: any) => {
         const productId = p.id
-        const vendorName = p.vendorId?.name || 'N/A'
+        const vendor = p.vendorId ? vendorMap.get(String(p.vendorId)) : null
+        const vendorName = vendor?.name || 'N/A'
         if (productId) {
           productVendorMap.set(productId, vendorName)
         }
       })
 
       productMappings.forEach((mapping: any) => {
-        // Use string product ID
-        const productReadableId = mapping.productId?.id || String(mapping.productId)
-        const productName = mapping.productId?.name || 'Unknown'
-        const productSku = mapping.productId?.sku || 'N/A'
-        const subcategoryName = mapping.subCategoryId?.name || 'Unknown'
+        // Use string product ID - fetch from maps
+        const productReadableId = String(mapping.productId)
+        const product = productMap.get(productReadableId)
+        const subcategory = subcategoryMap.get(String(mapping.subCategoryId))
+        
+        const productName = product?.name || 'Unknown'
+        const productSku = product?.sku || 'N/A'
+        const subcategoryName = subcategory?.name || 'Unknown'
         const vendorName = productVendorMap.get(productReadableId) || 'N/A'
-
-        // Get product from products array to get sizes
-        const product = products.find((p: any) => p.id === productReadableId)
         const supportedSizes = product?.sizes || []
 
         if (productReadableId) {

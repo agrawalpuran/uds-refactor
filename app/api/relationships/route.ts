@@ -1,3 +1,4 @@
+
 import { NextResponse } from 'next/server'
 import {
   getProductCompanies,
@@ -10,9 +11,9 @@ import {
   deleteProductVendor,
 } from '@/lib/db/data-access'
 
-
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -21,134 +22,138 @@ export async function GET(request: Request) {
     if (type === 'productCompany') {
       const relationships = await getProductCompanies()
       return NextResponse.json(relationships)
+    }
 
     if (type === 'productVendor') {
-    }
-    const relationships = await getProductVendors()
+      const relationships = await getProductVendors()
       return NextResponse.json(relationships)
+    }
 
     return NextResponse.json({
       productCompanies: await getProductCompanies(),
       productVendors: await getProductVendors(),
     })
+
   } catch (error: any) {
     console.error('API Error:', error)
-    // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
-    const isConnectionError = errorMessage.includes('Mongo') || 
-                              errorMessage.includes('connection') || 
-                              errorMessage.includes('ECONNREFUSED') ||
-                              errorMessage.includes('timeout') ||
-                              errorMessage.includes('network') ||
-                              error?.code === 'ECONNREFUSED' ||
-                              error?.code === 'ETIMEDOUT' ||
-                              error?.name === 'MongoNetworkError' ||
-                              error?.name === 'MongoServerSelectionError'
-    
-    // Return 400 for validation/input errors
-    if (errorMessage.includes('required') ||
-        errorMessage.includes('invalid') ||
-        errorMessage.includes('missing') ||
-        errorMessage.includes('not found') ||
-        errorMessage.includes('Invalid JSON')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 400 }
-      )
-    
-    // Return 401 for authentication errors
-    if (errorMessage.includes('Unauthorized') ||
-        errorMessage.includes('authentication') ||
-        errorMessage.includes('token')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 401 }
-      )
-    
-    // Return 500 for server errors
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
-    )
+
+    const isConnectionError =
+      errorMessage.includes('Mongo') ||
+      errorMessage.includes('connection') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('network') ||
+      error?.code === 'ECONNREFUSED' ||
+      error?.code === 'ETIMEDOUT' ||
+      error?.name === 'MongoNetworkError' ||
+      error?.name === 'MongoServerSelectionError'
+
+    if (
+      errorMessage.includes('required') ||
+      errorMessage.includes('invalid') ||
+      errorMessage.includes('missing') ||
+      errorMessage.includes('not found') ||
+      errorMessage.includes('Invalid JSON')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 400 })
+    }
+
+    if (
+      errorMessage.includes('Unauthorized') ||
+      errorMessage.includes('authentication') ||
+      errorMessage.includes('token')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 401 })
+    }
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
+  }
 }
 
 export async function POST(request: Request) {
   try {
-    // Parse JSON body with error handling
     let body: any
     try {
       body = await request.json()
     } catch (jsonError: any) {
-      return NextResponse.json({
-        error: 'Invalid JSON in request body'
-      }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      )
+    }
+
     const { type, productId, productIds, companyId, vendorId } = body
 
     // Batch operations
     if (type === 'productCompany' && productIds && Array.isArray(productIds) && companyId) {
       const result = await createProductCompanyBatch(productIds, companyId)
       return NextResponse.json({ success: true, result })
+    }
 
     if (type === 'productVendor' && productIds && Array.isArray(productIds) && vendorId) {
       const result = await createProductVendorBatch(productIds, vendorId)
       return NextResponse.json({ success: true, result })
+    }
 
-    // Single operations (backward compatibility)
+    // Single operations
     if (type === 'productCompany' && productId && companyId) {
       await createProductCompany(productId, companyId)
       return NextResponse.json({ success: true })
-
     }
+
     if (type === 'productVendor' && productId && vendorId) {
       await createProductVendor(productId, vendorId)
       return NextResponse.json({ success: true })
+    }
 
     if (type === 'vendorCompany' && vendorId && companyId) {
-      // Vendor-company relationships are no longer used
-      return NextResponse.json({ 
-        error: 'Vendor-company relationships are no longer used. Products are linked to companies directly, and vendors supply products. No explicit vendor-company relationship is needed.'
-      }, { status: 400 })
-
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
-  } catch (error: any) {
-    console.error('API Error:', error)
-    // Return appropriate status code based on error type
-    const errorMessage = error?.message || error?.toString() || 'Internal server error'
-    const isConnectionError = errorMessage.includes('Mongo') || 
-                              errorMessage.includes('connection') || 
-                              errorMessage.includes('ECONNREFUSED') ||
-                              errorMessage.includes('timeout') ||
-                              errorMessage.includes('network') ||
-                              error?.code === 'ECONNREFUSED' ||
-                              error?.code === 'ETIMEDOUT' ||
-                              error?.name === 'MongoNetworkError' ||
-                              error?.name === 'MongoServerSelectionError'
-    
-    // Return 400 for validation/input errors
-    if (errorMessage.includes('required') ||
-        errorMessage.includes('invalid') ||
-        errorMessage.includes('missing') ||
-        errorMessage.includes('not found') ||
-        errorMessage.includes('Invalid JSON')) {
       return NextResponse.json(
-        { error: errorMessage },
+        {
+          error:
+            'Vendor-company relationships are no longer used. Products are linked to companies directly, and vendors supply products. No explicit vendor-company relationship is needed.',
+        },
         { status: 400 }
       )
-    
-    // Return 401 for authentication errors
-    if (errorMessage.includes('Unauthorized') ||
-        errorMessage.includes('authentication') ||
-        errorMessage.includes('token')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 401 }
-      )
-    
-    // Return 500 for server errors
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
-    )
+    }
+
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+
+  } catch (error: any) {
+    console.error('API Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+
+    const isConnectionError =
+      errorMessage.includes('Mongo') ||
+      errorMessage.includes('connection') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('network') ||
+      error?.code === 'ECONNREFUSED' ||
+      error?.code === 'ETIMEDOUT' ||
+      error?.name === 'MongoNetworkError' ||
+      error?.name === 'MongoServerSelectionError'
+
+    if (
+      errorMessage.includes('required') ||
+      errorMessage.includes('invalid') ||
+      errorMessage.includes('missing') ||
+      errorMessage.includes('not found') ||
+      errorMessage.includes('Invalid JSON')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 400 })
+    }
+
+    if (
+      errorMessage.includes('Unauthorized') ||
+      errorMessage.includes('authentication') ||
+      errorMessage.includes('token')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 401 })
+    }
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
+  }
 }
 
 export async function DELETE(request: Request) {
@@ -162,62 +167,58 @@ export async function DELETE(request: Request) {
     if (type === 'productCompany' && productId && companyId) {
       await deleteProductCompany(productId, companyId)
       return NextResponse.json({ success: true })
-
     }
+
     if (type === 'productVendor' && productId && vendorId) {
       await deleteProductVendor(productId, vendorId)
       return NextResponse.json({ success: true })
+    }
 
     if (type === 'vendorCompany' && vendorId && companyId) {
-      // Vendor-company relationships are no longer used
-      return NextResponse.json({ 
-        error: 'Vendor-company relationships are no longer used. Products are linked to companies directly, and vendors supply products. No explicit vendor-company relationship exists to delete.'
-      }, { status: 400 })
-
-    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
-  } catch (error: any) {
-    console.error('API Error:', error)
-    // Return appropriate status code based on error type
-    const errorMessage = error?.message || error?.toString() || 'Internal server error'
-    const isConnectionError = errorMessage.includes('Mongo') || 
-                              errorMessage.includes('connection') || 
-                              errorMessage.includes('ECONNREFUSED') ||
-                              errorMessage.includes('timeout') ||
-                              errorMessage.includes('network') ||
-                              error?.code === 'ECONNREFUSED' ||
-                              error?.code === 'ETIMEDOUT' ||
-                              error?.name === 'MongoNetworkError' ||
-                              error?.name === 'MongoServerSelectionError'
-    
-    // Return 400 for validation/input errors
-    if (errorMessage.includes('required') ||
-        errorMessage.includes('invalid') ||
-        errorMessage.includes('missing') ||
-        errorMessage.includes('not found') ||
-        errorMessage.includes('Invalid JSON')) {
       return NextResponse.json(
-        { error: errorMessage },
+        {
+          error:
+            'Vendor-company relationships are no longer used. Products are linked to companies directly, and vendors supply products. No explicit vendor-company relationship exists to delete.',
+        },
         { status: 400 }
       )
-    
-    // Return 401 for authentication errors
-    if (errorMessage.includes('Unauthorized') ||
-        errorMessage.includes('authentication') ||
-        errorMessage.includes('token')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 401 }
-      )
-    
-    // Return 500 for server errors
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
-    )
+    }
+
+    return NextResponse.json({ error: 'Invalid request' }, { status: 400 })
+
+  } catch (error: any) {
+    console.error('API Error:', error)
+    const errorMessage = error?.message || error?.toString() || 'Internal server error'
+
+    const isConnectionError =
+      errorMessage.includes('Mongo') ||
+      errorMessage.includes('connection') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('timeout') ||
+      errorMessage.includes('network') ||
+      error?.code === 'ECONNREFUSED' ||
+      error?.code === 'ETIMEDOUT' ||
+      error?.name === 'MongoNetworkError' ||
+      error?.name === 'MongoServerSelectionError'
+
+    if (
+      errorMessage.includes('required') ||
+      errorMessage.includes('invalid') ||
+      errorMessage.includes('missing') ||
+      errorMessage.includes('not found') ||
+      errorMessage.includes('Invalid JSON')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 400 })
+    }
+
+    if (
+      errorMessage.includes('Unauthorized') ||
+      errorMessage.includes('authentication') ||
+      errorMessage.includes('token')
+    ) {
+      return NextResponse.json({ error: errorMessage }, { status: 401 })
+    }
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 })
+  }
 }
-
-
-
-
-
-

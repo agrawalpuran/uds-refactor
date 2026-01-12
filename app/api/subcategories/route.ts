@@ -1,3 +1,4 @@
+
 /**
  * Company Admin Subcategory Management APIs
  * 
@@ -21,6 +22,7 @@ import mongoose from 'mongoose'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
   try {
     await connectDB()
@@ -44,6 +46,7 @@ export async function GET(request: NextRequest) {
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
+    }
     
     // Get company - use string ID
     const Company = mongoose.model('Company')
@@ -55,6 +58,7 @@ export async function GET(request: NextRequest) {
         { error: 'Company not found' },
         { status: 404 }
       )
+    }
     
     console.log('[API /subcategories] Found company:', { id: company.id })
     
@@ -73,6 +77,7 @@ export async function GET(request: NextRequest) {
           { error: 'Parent category not found' },
           { status: 404 }
         )
+      }
       
       query.parentCategoryId = parentCategory.id
       console.log('[API /subcategories] Filtering by parent category:', parentCategory.name)
@@ -106,7 +111,6 @@ export async function GET(request: NextRequest) {
     })
     
     const subcategories = await Subcategory.find(query)
-      .populate('parentCategoryId', 'id name isSystemCategory')
       .sort({ name: 1 })
       .lean()
     
@@ -119,38 +123,33 @@ export async function GET(request: NextRequest) {
         companyId: s.companyId?.toString(),
         parentCategoryId: s.parentCategoryId,
         parentCategoryIdType: typeof s.parentCategoryId,
-        parentCategoryIdKeys: s.parentCategoryId && typeof s.parentCategoryId === 'object' ? Object.keys(s.parentCategoryId) : 'N/A',
       }))
     })
     
+    // CRITICAL FIX: parentCategoryId is stored as STRING ID, not ObjectId
+    // Manually fetch parent categories using string IDs
+    const uniqueParentCategoryIds = [...new Set(subcategories.map((s: any) => s.parentCategoryId).filter(Boolean))]
+    const parentCategories = await Category.find({ id: { $in: uniqueParentCategoryIds } })
+      .select('id name isSystemCategory')
+      .lean()
+    const parentCategoryMap = new Map(parentCategories.map((c: any) => [c.id, c]))
+    
     // Map subcategories to response format
     const mappedSubcategories = subcategories.map((sub: any) => {
-      // Handle populated parentCategoryId - with lean(), it's either an ObjectId or a populated object
+      // parentCategoryId is a STRING ID, not ObjectId - fetch parent category manually
       const parentCategoryId = sub.parentCategoryId
-      let parentCategory: any = null
-      
-      if (parentCategoryId) {
-        // Check if it's populated - extract the data using string ID
-        if (typeof parentCategoryId === 'object' && 'id' in parentCategoryId) {
-          // It's populated - extract the data
-          parentCategory = {
-            id: (parentCategoryId as any).id,
-            name: (parentCategoryId as any).name,
-            isSystemCategory: (parentCategoryId as any).isSystemCategory
-          }
-        }
-      }
-      
-      const parentCategoryIdStr = typeof parentCategoryId === 'object' && '_id' in parentCategoryId 
-        ? (parentCategoryId as any)._id?.toString() 
-        : parentCategoryId?.toString()
+      const parentCategory = parentCategoryId ? parentCategoryMap.get(parentCategoryId) : null
       
       return {
         id: sub.id,
         _id: sub._id.toString(),
         name: sub.name,
-        parentCategoryId: parentCategoryIdStr,
-        parentCategory: parentCategory,
+        parentCategoryId: parentCategoryId?.toString() || null,
+        parentCategory: parentCategory ? {
+          id: parentCategory.id,
+          name: parentCategory.name,
+          isSystemCategory: parentCategory.isSystemCategory
+        } : null,
         companyId: sub.companyId.toString(),
         status: sub.status,
         createdAt: sub.createdAt,
@@ -195,6 +194,7 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     )
   }
+}
 
 /**
  * POST /api/subcategories
@@ -213,6 +213,8 @@ export async function POST(request: NextRequest) {
         { error: 'Invalid JSON in request body' },
         { status: 400 }
       )
+    }
+
     const { companyId, parentCategoryId, name } = body
     
     if (!parentCategoryId || !name) {
@@ -220,6 +222,7 @@ export async function POST(request: NextRequest) {
         { error: 'parentCategoryId and name are required' },
         { status: 400 }
       )
+    }
     
     // Validate companyId from authenticated user context
     let validatedCompanyId: string
@@ -232,6 +235,7 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       )
     }
+
     const Company = mongoose.model('Company')
     const company = await Company.findOne({ id: validatedCompanyId })
     
@@ -240,9 +244,9 @@ export async function POST(request: NextRequest) {
         { error: 'Company not found' },
         { status: 404 }
       )
-    
-    // Find parent category - use string ID
     }
+
+    // Find parent category - use string ID
     const parentCategory = await Category.findOne({ id: parentCategoryId })
     
     if (!parentCategory) {
@@ -250,15 +254,16 @@ export async function POST(request: NextRequest) {
         { error: 'Parent category not found' },
         { status: 404 }
       )
-    
     }
+
     if (parentCategory.status !== 'active') {
       return NextResponse.json(
         { error: 'Parent category is not active' },
         { status: 400 }
       )
+    }
     
-    // Check if subcategory with same name already exists for this company and parent category - use string IDs
+    // Check if subcategory with same name already exists for this company/category
     const existing = await Subcategory.findOne({
       parentCategoryId: parentCategory.id,
       companyId: company.id,
@@ -271,7 +276,8 @@ export async function POST(request: NextRequest) {
         { status: 409 }
       )
     }
-    }
+
+    // Generate new subcategory ID
     let subcategoryId = 600001
     while (await Subcategory.findOne({ id: subcategoryId.toString() })) {
       subcategoryId++
@@ -303,6 +309,7 @@ export async function POST(request: NextRequest) {
         status: subcategory.status
       }
     })
+
   } catch (error: any) {
     console.error('Error creating subcategory:', error)
     
@@ -318,6 +325,7 @@ export async function POST(request: NextRequest) {
       { error: error.message || 'Failed to create subcategory' },
       { status: 500 }
     )
+  }
 }
 
 /**
@@ -336,6 +344,8 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+
     const { subcategoryId, name, status } = body
     
     if (!subcategoryId) {
@@ -343,9 +353,9 @@ export async function PUT(request: NextRequest) {
         { error: 'subcategoryId is required' },
         { status: 400 }
       )
+    }
     
     // Find subcategory - use string ID
-    }
     const subcategory = await Subcategory.findOne({ id: subcategoryId })
     
     if (!subcategory) {
@@ -353,6 +363,7 @@ export async function PUT(request: NextRequest) {
         { error: 'Subcategory not found' },
         { status: 404 }
       )
+    }
     
     // Validate companyId from authenticated user context and ensure subcategory belongs to user's company
     try {
@@ -371,6 +382,7 @@ export async function PUT(request: NextRequest) {
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
+    }
     
     // Update fields
     if (name !== undefined && name !== subcategory.name) {
@@ -400,6 +412,7 @@ export async function PUT(request: NextRequest) {
           { error: 'Status must be "active" or "inactive"' },
           { status: 400 }
         )
+      }
       subcategory.status = status
     }
     
@@ -430,6 +443,7 @@ export async function PUT(request: NextRequest) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -439,6 +453,7 @@ export async function PUT(request: NextRequest) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -448,6 +463,7 @@ export async function PUT(request: NextRequest) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -473,9 +489,9 @@ export async function DELETE(request: NextRequest) {
         { error: 'subcategoryId is required' },
         { status: 400 }
       )
+    }
     
     // Find subcategory - use string ID
-    }
     const subcategory = await Subcategory.findOne({ id: subcategoryId })
     
     if (!subcategory) {
@@ -483,6 +499,7 @@ export async function DELETE(request: NextRequest) {
         { error: 'Subcategory not found' },
         { status: 404 }
       )
+    }
     
     // Validate companyId from authenticated user context and ensure subcategory belongs to user's company
     try {
@@ -501,6 +518,7 @@ export async function DELETE(request: NextRequest) {
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
+    }
     
     // Check if subcategory has active product mappings - use string ID
     const ProductSubcategoryMapping = mongoose.model('ProductSubcategoryMapping')
@@ -557,6 +575,7 @@ export async function DELETE(request: NextRequest) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -566,6 +585,7 @@ export async function DELETE(request: NextRequest) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -575,6 +595,7 @@ export async function DELETE(request: NextRequest) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -583,4 +604,3 @@ export async function DELETE(request: NextRequest) {
     )
   }
 }
-
