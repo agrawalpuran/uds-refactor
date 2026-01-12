@@ -33,6 +33,7 @@ export async function POST() {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || errorMessage.includes('Not found') || errorMessage.includes('does not exist')) {
@@ -40,6 +41,7 @@ export async function POST() {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -49,3 +51,4 @@ export async function POST() {
   }
 }
 
+}

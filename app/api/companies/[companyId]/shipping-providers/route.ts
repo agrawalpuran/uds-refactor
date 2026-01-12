@@ -74,7 +74,6 @@ export async function GET(
       { error: errorMessage },
       { status: 500 }
     )
-    }
   }
 }
 
@@ -402,3 +401,4 @@ export async function PUT(
   }
 }
 
+}

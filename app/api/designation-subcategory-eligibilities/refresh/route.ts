@@ -287,3 +287,4 @@ function mapCategoryNameToLegacy(categoryName: string): string | null {
   return null
 }
 
+}

@@ -14,6 +14,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
     const {
       originalOrderId,
       originalOrderItemIndex,
@@ -31,9 +32,9 @@ export async function POST(request: Request) {
         { error: 'Missing required fields: originalOrderId, originalOrderItemIndex, requestedQty, requestedSize, requestedBy' },
         { status: 400 }
       )
+    }
 
     // Create return request
-    }
     const returnRequest = await createReturnRequest({
       originalOrderId,
       originalOrderItemIndex: parseInt(originalOrderItemIndex),
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
       { error: error.message || 'Failed to create return request' },
       { status: 400 }
     )
+  }
 }
 
 export async function GET(request: Request) {
@@ -68,7 +70,6 @@ export async function GET(request: Request) {
         { error: 'Missing required parameters: orderId, itemIndex, requestedQty' },
         { status: 400 }
       )
-
     }
     const validation = await validateReturnEligibility(
       orderId,
@@ -84,5 +85,7 @@ export async function GET(request: Request) {
       { error: error.message || 'Failed to validate return eligibility' },
       { status: 400 }
     )
+  }
 }
 
+}
