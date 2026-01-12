@@ -91,6 +91,3 @@ export async function GET(request: Request) {
       { status: 500 }
     )
   }
-}
-
-}

@@ -250,7 +250,6 @@ export async function POST(
       { error: errorMessage },
       { status: 500 }
     )
-    }
   }
 }
 
@@ -401,4 +400,3 @@ export async function PUT(
   }
 }
 
-}

@@ -218,6 +218,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({ 
       error: error.message || 'Failed to update branch'
     }, { status: 400 })
+  }
 }
 
 export async function DELETE(request: Request) {
@@ -240,6 +241,3 @@ export async function DELETE(request: Request) {
       error: error.message || 'Failed to delete branch'
     }, { status: 400 })
   }
-}
-
-}

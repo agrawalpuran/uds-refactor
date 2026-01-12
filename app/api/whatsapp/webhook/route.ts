@@ -234,4 +234,3 @@ export async function GET(request: NextRequest) {
       message: 'WhatsApp webhook endpoint',
       status: 'active'
     }, { status: 200 })
-}

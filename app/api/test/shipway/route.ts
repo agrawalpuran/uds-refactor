@@ -309,4 +309,3 @@ export async function GET() {
   }
 }
 
-}

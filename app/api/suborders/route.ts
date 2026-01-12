@@ -49,6 +49,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -58,13 +59,14 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
-}
+  }
 
 export async function PATCH(request: Request) {
   try {
@@ -192,4 +194,3 @@ export async function GET(request: Request) {
     )
 }
 
-}

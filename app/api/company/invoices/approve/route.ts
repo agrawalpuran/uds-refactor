@@ -46,7 +46,6 @@ export async function POST(request: Request) {
 
     console.log('[API /company/invoices/approve POST] Invoice approved successfully')
     return NextResponse.json(approvedInvoice, { status: 200 })
-    }
   } catch (error: any) {
     console.error('API Error in /api/company/invoices/approve POST:', error)
     console.error('API Error in /api/company/invoices/approve POST:', error)
@@ -88,8 +87,4 @@ export async function POST(request: Request) {
       { error: errorMessage },
       { status: 500 }
     )
-    }
   }
-}
-
-}

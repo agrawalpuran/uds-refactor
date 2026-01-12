@@ -76,8 +76,7 @@ export async function GET(request: Request) {
 // Explicitly disable POST, PUT, DELETE methods for read-only endpoint
 export async function POST() {
   try {
-
-  return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
+    return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
   } catch (error: any) {
     console.error(`[API] Error in POST handler:`, error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
@@ -91,6 +90,7 @@ export async function POST() {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -100,6 +100,7 @@ export async function POST() {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -109,13 +110,14 @@ export async function POST() {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
-
+  }
 export async function PUT() {
   try {
 
@@ -200,4 +202,3 @@ export async function DELETE() {
       { status: 500 }
     )
 
-}

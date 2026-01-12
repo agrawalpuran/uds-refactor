@@ -194,7 +194,7 @@ export async function GET(request: NextRequest) {
       { error: error.message || 'Failed to fetch subcategories' },
       { status: 500 }
     )
-}
+  }
 
 /**
  * POST /api/subcategories
@@ -584,4 +584,3 @@ export async function DELETE(request: NextRequest) {
   }
 }
 
-}

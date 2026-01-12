@@ -124,7 +124,8 @@ export async function GET(request: Request) {
       return NextResponse.json(
         { error: errorMessage },
         { status: 400 }
-      )}
+      )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -134,13 +135,14 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
-}
+  }
 
 export async function PATCH(request: Request) {
   try {
@@ -274,6 +276,7 @@ export async function PATCH(request: Request) {
       if (shipmentRequestMode !== undefined) {
         if (shipmentRequestMode !== 'MANUAL' && shipmentRequestMode !== 'AUTOMATIC') {
           return NextResponse.json({ error: 'shipmentRequestMode must be either MANUAL or AUTOMATIC' }, { status: 400 })
+        }
         settings.shipmentRequestMode = shipmentRequestMode
       }
       const updated = await updateCompanySettings(companyId, settings)
@@ -281,9 +284,8 @@ export async function PATCH(request: Request) {
     } else {
       return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
     }
-    }
   } catch (error: any) {
-    console.error('API Error:', error) }
+    console.error('API Error:', error)
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     const isConnectionError = errorMessage.includes('Mongo') || 
@@ -305,7 +307,8 @@ export async function PATCH(request: Request) {
       return NextResponse.json(
         { error: errorMessage },
         { status: 400 }
-      ) }
+      )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -315,7 +318,7 @@ export async function PATCH(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
-    
+    }
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
@@ -379,4 +382,3 @@ export async function POST(request: Request) {
     )
 }
 
-}
