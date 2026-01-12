@@ -155,6 +155,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ 
       error: error.message || 'Failed to create branch'
     }, { status: 400 })
+  }
 }
 
 export async function PUT(request: Request) {

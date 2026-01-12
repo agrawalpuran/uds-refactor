@@ -29,11 +29,11 @@ export async function GET(
         { error: `Branch not found: ${branchId}` },
         { status: 404 }
       )
+    }
 
     const branchIdStr = branch.id
 
     // Find employees for the branch - use string IDs
-    }
     const employees = await Employee.find({
       $or: [
         { locationId: branchIdStr },
@@ -88,6 +88,4 @@ export async function GET(
       { status: 500 }
     )
   }
-}
-
 }

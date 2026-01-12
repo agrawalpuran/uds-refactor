@@ -194,6 +194,3 @@ export async function DELETE(request: Request) {
       error: error.message || 'Failed to delete employee'
     }, { status: 400 })
   }
-}
-
-}
