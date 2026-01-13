@@ -1,10 +1,11 @@
+
 import { NextResponse } from 'next/server'
 import mongoose from 'mongoose'
 import connectDB from '@/lib/db/mongodb'
 
-
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
   try {
     await connectDB()
@@ -13,16 +14,19 @@ export async function GET(request: Request) {
     
     if (!vendorId) {
       return NextResponse.json({ error: 'vendorId is required' }, { status: 400 })
-    
     }
+
     if (!mongoose.connection.db) {
       return NextResponse.json(
         { error: 'Database connection not available' },
         { status: 500 }
       )
+    }
+
     const db = mongoose.connection.db
     if (!db) {
       return NextResponse.json({ error: 'Database connection not available' }, { status: 500 })
+    }
     
     console.log(`[DEBUG API] Starting debug for vendorId: ${vendorId}`)
     
@@ -35,6 +39,7 @@ export async function GET(request: Request) {
     const vendor = await db.collection('vendors').findOne({ id: vendorId })
     if (!vendor) {
       return NextResponse.json({ error: 'Vendor not found', debugInfo }, { status: 404 })
+    }
     
     debugInfo.vendor = {
       name: vendor.name,
@@ -43,73 +48,28 @@ export async function GET(request: Request) {
       _idType: vendor._id?.constructor?.name
     }
     
-    const vendorObjectId = vendor._id instanceof mongoose.Types.ObjectId
-      ? vendor._id
-      : new mongoose.Types.ObjectId(vendor._id)
+    // Use vendor's string ID
+    const vendorIdStr = vendor.id || String(vendor._id || '')
     
-    // Step 2: Query ProductVendor with ObjectId
+    // Step 2: Query ProductVendor with string ID
     const productVendorLinks1 = await db.collection('productvendors').find({ 
-      vendorId: vendorObjectId 
+      vendorId: vendorIdStr 
     }).toArray()
     
     debugInfo.steps.push({
-      method: 'ObjectId query',
-      query: { vendorId: vendorObjectId.toString() },
+      method: 'String ID query',
+      query: { vendorId: vendorIdStr },
       found: productVendorLinks1.length
     })
     
-    // Step 3: Query ProductVendor with string
-    const vendorIdString = vendorObjectId.toString()
-    const productVendorLinks2 = await db.collection('productvendors').find({ 
-      vendorId: vendorIdString 
-    }).toArray()
-    
-    debugInfo.steps.push({
-      method: 'String query',
-      query: { vendorId: vendorIdString },
-      found: productVendorLinks2.length
-    })
-    
-    // Step 4: Get ALL ProductVendor links
+    // Step 3: Get ALL ProductVendor links for manual filtering
     const allLinks = await db.collection('productvendors').find({}).toArray()
     debugInfo.totalProductVendorLinks = allLinks.length
     
-    // Step 5: Manual filtering
-    const vendorDbObjectId = vendor._id instanceof mongoose.Types.ObjectId
-      ? vendor._id
-      : (mongoose.Types.ObjectId.isValid(vendor._id) ? new mongoose.Types.ObjectId(vendor._id) : null)
-    
+    // Step 4: Manual filtering by string ID
     const matchedLinks = allLinks.filter((link: any) => {
-      const linkVendorId = link.vendorId
-      let linkVendorIdStr = ''
-      let linkVendorIdObjectId: mongoose.Types.ObjectId | null = null
-      
-      if (linkVendorId instanceof mongoose.Types.ObjectId) {
-        linkVendorIdStr = linkVendorId.toString()
-        linkVendorIdObjectId = linkVendorId
-      } else if (typeof linkVendorId === 'object' && linkVendorId !== null) {
-        linkVendorIdStr = linkVendorId.toString ? linkVendorId.toString() : String(linkVendorId)
-        if (linkVendorId._id) {
-          linkVendorIdObjectId = linkVendorId._id instanceof mongoose.Types.ObjectId 
-            ? linkVendorId._id 
-            : (mongoose.Types.ObjectId.isValid(linkVendorId._id) ? new mongoose.Types.ObjectId(linkVendorId._id) : null)
-        } else if (mongoose.Types.ObjectId.isValid(linkVendorId)) {
-          linkVendorIdObjectId = new mongoose.Types.ObjectId(linkVendorId)
-        }
-      } else {
-        linkVendorIdStr = String(linkVendorId || '')
-        if (mongoose.Types.ObjectId.isValid(linkVendorIdStr)) {
-          linkVendorIdObjectId = new mongoose.Types.ObjectId(linkVendorIdStr)
-        }
-      }
-      
-      const matches = 
-        linkVendorIdStr === vendorObjectId.toString() ||
-        (linkVendorIdObjectId && vendorObjectId && linkVendorIdObjectId.equals(vendorObjectId)) ||
-        (linkVendorId === vendor._id) ||
-        (linkVendorIdObjectId && vendorDbObjectId && linkVendorIdObjectId.equals(vendorDbObjectId))
-      
-      return matches
+      const linkVendorId = link.vendorId?.id || String(link.vendorId || '')
+      return linkVendorId === vendorIdStr || String(link.vendorId) === vendorIdStr
     })
     
     debugInfo.steps.push({
@@ -137,7 +97,7 @@ export async function GET(request: Request) {
           return new mongoose.Types.ObjectId(productId)
         }
         return null
-      }).filter(id => id !== null)
+      }).filter(id => id !== null) as mongoose.Types.ObjectId[]
       
       products = await db.collection('uniforms').find({
         _id: { $in: productIds }
@@ -175,10 +135,10 @@ export async function GET(request: Request) {
                               errorMessage.includes('ECONNREFUSED') ||
                               errorMessage.includes('timeout') ||
                               errorMessage.includes('network') ||
-                              error?.code === 'ECONNREFUSED' ||
-                              error?.code === 'ETIMEDOUT' ||
-                              error?.name === 'MongoNetworkError' ||
-                              error?.name === 'MongoServerSelectionError'
+                              (error as any)?.code === 'ECONNREFUSED' ||
+                              (error as any)?.code === 'ETIMEDOUT' ||
+                              (error as any)?.name === 'MongoNetworkError' ||
+                              (error as any)?.name === 'MongoServerSelectionError'
     
     // Return 400 for validation/input errors
     if (errorMessage.includes('required') ||
@@ -190,6 +150,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -199,11 +160,12 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
+      { error: errorMessage, type: isConnectionError ? 'database_connection_error' : 'api_error' },
+      { status: isConnectionError ? 503 : 500 }
     )
+  }
 }
-

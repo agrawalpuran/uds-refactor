@@ -358,8 +358,19 @@ export async function POST(request: NextRequest) {
       throw createError // Re-throw to be caught by outer catch block
     }
     
-    await mapping.populate('productId', 'id name')
-    await mapping.populate('subCategoryId', 'id name')
+    // Manually populate productId and subCategoryId since populate doesn't work with string IDs
+    if (mapping.productId) {
+      const product = await Uniform.findOne({ id: mapping.productId }).select('id name').lean()
+      if (product) {
+        (mapping as any).productId = product
+      }
+    }
+    if (mapping.subCategoryId) {
+      const subcategory = await Subcategory.findOne({ id: mapping.subCategoryId }).select('id name').lean()
+      if (subcategory) {
+        (mapping as any).subCategoryId = subcategory
+      }
+    }
     
     // Return string 'id' fields for consistency with GET endpoint
     const populatedProduct = mapping.productId as any
@@ -438,12 +449,8 @@ export async function DELETE(request: NextRequest) {
     }
     
     // Find mapping - use string ID only
-    // Note: mappingId should be the _id as string for backward compatibility with existing UI
-    // But we'll try id field first, then _id if needed
-    let mapping = await ProductSubcategoryMapping.findOne({ id: mappingId })
-    if (!mapping && mongoose.Types.ObjectId.isValid(mappingId)) {
-      mapping = await ProductSubcategoryMapping.findById(mappingId)
-    }
+    const mappingIdStr = String(mappingId)
+    const mapping = await ProductSubcategoryMapping.findOne({ id: mappingIdStr })
     
     if (!mapping) {
       return NextResponse.json(

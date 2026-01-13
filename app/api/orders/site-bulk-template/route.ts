@@ -207,8 +207,14 @@ export async function GET(request: NextRequest) {
         const subcategoryName = subcategory?.name || 'N/A'
         
         // Get vendor name - use string product ID
-        const productVendor: any = await ProductVendor.findOne({ productId: productId }).populate('vendorId', 'name').lean()
-        const vendorName = productVendor?.vendorId?.name || 'N/A'
+        const productVendor: any = await ProductVendor.findOne({ productId: productId }).lean()
+        let vendorName = 'N/A'
+        if (productVendor?.vendorId) {
+          const vendor = await Vendor.findOne({ id: productVendor.vendorId }).select('name').lean()
+          if (vendor) {
+            vendorName = vendor.name || 'N/A'
+          }
+        }
 
         productDetailsMap.set(productId, {
           id: productId,

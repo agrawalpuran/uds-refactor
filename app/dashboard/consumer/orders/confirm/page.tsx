@@ -192,18 +192,39 @@ export default function OrderConfirmationPage() {
       } catch (error: any) {
         console.error('Error saving order to database:', error)
         const errorMessage = error?.message || error?.toString() || 'Unknown error occurred'
+        
+        // CRITICAL: Log validation errors if they exist
+        if (error?.validationErrors && Array.isArray(error.validationErrors)) {
+          console.error('Validation Errors:', error.validationErrors)
+          const validationMessages = error.validationErrors.map((v: any) => 
+            `${v.field}: ${v.message} (value: ${JSON.stringify(v.value)})`
+          ).join('; ')
+          console.error('Validation Error Summary:', validationMessages)
+        }
+        
         console.error('Full error details:', {
           message: errorMessage,
           stack: error?.stack,
           error: error,
-          errorType: error?.constructor?.name
+          errorType: error?.constructor?.name,
+          details: error?.details,
+          validationErrors: error?.validationErrors,
+          type: error?.type
         })
         
         // Provide more helpful error message based on the actual error
         let userFriendlyMessage = errorMessage
         
-        // Check for specific error patterns
-        if (errorMessage.includes('No vendor found') || errorMessage.includes('vendor') && errorMessage.includes('not found')) {
+        // Check for pincode validation errors
+        if (errorMessage.includes('pincode') || errorMessage.includes('Pincode')) {
+          if (errorMessage.includes('missing')) {
+            userFriendlyMessage = `Unable to process order: Your address is missing a pincode.\n\nPlease contact your administrator to update your address with a valid 6-digit pincode (e.g., "110001").`
+          } else if (errorMessage.includes('Invalid') || errorMessage.includes('invalid')) {
+            userFriendlyMessage = `Unable to process order: Your address has an invalid pincode format.\n\nPincode must be exactly 6 digits (e.g., "110001"). Please contact your administrator to update your address.`
+          } else {
+            userFriendlyMessage = `Unable to process order: Address validation failed.\n\n${errorMessage}\n\nPlease contact your administrator to update your address information.`
+          }
+        } else if (errorMessage.includes('No vendor found') || errorMessage.includes('vendor') && errorMessage.includes('not found')) {
           userFriendlyMessage = `Unable to process order: One or more products are not linked to a vendor.\n\nPlease ensure:\n1. Products are linked to your company\n2. Products are linked to vendors\n\nContact your administrator to set up product-vendor relationships.`
         } else if (errorMessage.includes('Company not found') || errorMessage.includes('companyId')) {
           userFriendlyMessage = `Unable to process order: Company information is missing or invalid.\n\nPlease contact support.`

@@ -142,7 +142,7 @@ export async function GET(request: NextRequest) {
       companyId: company.id,
       status: 'active'
     })
-      .populate('subCategoryId', 'id name parentCategoryId')
+      // Removed populate - subCategoryId is a string ID, manually fetch if needed
       .lean()
 
     const eligibleSubcategoryIds = new Set<string>()

@@ -251,6 +251,30 @@ export async function POST(request: Request) {
     console.error('Error stack:', error?.stack)
     console.error('Request body:', body ? JSON.stringify(body, null, 2) : 'Could not parse request body')
     
+    // CRITICAL: Check for Mongoose validation errors
+    if (error?.name === 'ValidationError' && error?.errors) {
+      console.error('Mongoose Validation Error detected!')
+      const validationErrors: string[] = []
+      Object.keys(error.errors).forEach((key) => {
+        const err = error.errors[key]
+        console.error(`  Field: ${key}, Message: ${err.message}, Value: ${err.value}, Kind: ${err.kind}`)
+        validationErrors.push(`${key}: ${err.message} (value: ${JSON.stringify(err.value)})`)
+      })
+      console.error('All validation errors:', validationErrors)
+      
+      return NextResponse.json({ 
+        error: `Validation Error: ${validationErrors.join('; ')}`,
+        type: 'validation_error',
+        validationErrors: Object.keys(error.errors).map(key => ({
+          field: key,
+          message: error.errors[key].message,
+          value: error.errors[key].value,
+          kind: error.errors[key].kind
+        })),
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      }, { status: 400 })
+    }
+    
     // Extract error message more reliably
     let errorMessage = 'Unknown error occurred'
     if (error?.message) {
@@ -264,24 +288,25 @@ export async function POST(request: Request) {
     const isConnectionError = errorMessage.includes('Mongo') || errorMessage.includes('connection') || errorMessage.includes('ECONNREFUSED')
     const isVendorError = errorMessage.includes('vendor') || errorMessage.includes('Vendor') || errorMessage.includes('No vendor found')
     const isNotFoundError = errorMessage.includes('not found') || errorMessage.includes('Not found')
+    const isValidationError = errorMessage.includes('Validation') || errorMessage.includes('validation') || errorMessage.includes('must be')
     
     // Return appropriate status code based on error type
     let statusCode = 500
     if (isConnectionError) {
       statusCode = 503 // Service Unavailable
-    } else if (isVendorError || isNotFoundError) {
+    } else if (isVendorError || isNotFoundError || isValidationError) {
       statusCode = 400 // Bad Request
     }
     
     console.error('Returning error response:', {
       errorMessage,
       statusCode,
-      type: isConnectionError ? 'database_connection_error' : (isVendorError ? 'vendor_configuration_error' : 'api_error')
+      type: isConnectionError ? 'database_connection_error' : (isVendorError ? 'vendor_configuration_error' : (isValidationError ? 'validation_error' : 'api_error'))
     })
     
     return NextResponse.json({ 
       error: errorMessage,
-      type: isConnectionError ? 'database_connection_error' : (isVendorError ? 'vendor_configuration_error' : 'api_error'),
+      type: isConnectionError ? 'database_connection_error' : (isVendorError ? 'vendor_configuration_error' : (isValidationError ? 'validation_error' : 'api_error')),
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     }, { status: statusCode })
   }

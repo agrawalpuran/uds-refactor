@@ -78,9 +78,23 @@ export async function GET(request: Request) {
       pr_number: { $in: prNumbers },
       vendorId: vendorId,
     })
-      .populate('employeeId', 'id firstName lastName email mobile')
-      .populate('companyId', 'id name')
       .lean()
+    
+    // Manually populate employeeId and companyId since populate doesn't work with string IDs
+    for (const order of orders) {
+      if (order.employeeId) {
+        const employee = await Employee.findOne({ id: order.employeeId }).select('id firstName lastName email mobile').lean()
+        if (employee) {
+          (order as any).employeeId = employee
+        }
+      }
+      if (order.companyId) {
+        const company = await Company.findOne({ id: order.companyId }).select('id name').lean()
+        if (company) {
+          (order as any).companyId = company
+        }
+      }
+    }
 
     // Get warehouse information
     const warehouseIds = [...new Set(awaitingPickupShipments.map(s => s.warehouseRefId).filter(Boolean))]

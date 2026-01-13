@@ -292,8 +292,13 @@ export async function POST(request: NextRequest) {
       status: 'active'
     })
     
-    // Populate parent category for response
-    await subcategory.populate('parentCategoryId', 'id name isSystemCategory')
+    // Manually populate parent category since populate doesn't work with string IDs
+    if (subcategory.parentCategoryId) {
+      const parentCategory = await Category.findOne({ id: subcategory.parentCategoryId }).select('id name isSystemCategory').lean()
+      if (parentCategory) {
+        (subcategory as any).parentCategory = parentCategory
+      }
+    }
     
     return NextResponse.json({
       success: true,

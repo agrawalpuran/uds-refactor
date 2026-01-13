@@ -1103,23 +1103,38 @@ export async function createOrder(orderData: {
     })
 
     if (!response.ok) {
+      // CRITICAL FIX: Clone the response before reading to avoid "body stream already read" error
+      const responseClone = response.clone()
       let errorMessage = `API Error: ${response.status} ${response.statusText}`
+      let errorDetails: any = null
+      
       try {
+        // Try to parse as JSON first
         const errorData = await response.json()
         errorMessage = errorData.error || errorMessage
+        errorDetails = errorData
         console.error('API Error Response:', errorData)
       } catch (parseError) {
-        // If JSON parsing fails, try to get text
+        // If JSON parsing fails, try to get text from cloned response
         try {
-          const errorText = await response.text()
+          const errorText = await responseClone.text()
           if (errorText) {
             errorMessage = errorText
+            console.error('API Error Response (text):', errorText)
           }
         } catch (textError) {
           console.error('Failed to parse error response:', textError)
         }
       }
-      throw new Error(errorMessage)
+      
+      // Create error with details
+      const error = new Error(errorMessage) as any
+      if (errorDetails) {
+        error.details = errorDetails
+        error.validationErrors = errorDetails.validationErrors
+        error.type = errorDetails.type
+      }
+      throw error
     }
 
     return await response.json()

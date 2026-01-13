@@ -158,8 +158,9 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
 
     // Pre-fetch all employees for company (optimization)
+    // CRITICAL FIX: Employee.companyId is stored as STRING ID, not ObjectId - use company.id
     }
-    const companyEmployees = await Employee.find({ companyId: company._id })
+    const companyEmployees = await Employee.find({ companyId: company.id })
       .select('_id employeeId id companyId locationId branchId designation gender status')
       .lean()
 
@@ -374,7 +375,8 @@ export async function POST(request: NextRequest) {
         if (validOrderItems.length > 0) {
           try {
             // Get employee for delivery address
-            const fullEmployee: any = await Employee.findById(employee._id)
+            const employeeId = employee.id || employee.employeeId || String(employee._id)
+            const fullEmployee: any = await Employee.findOne({ id: employeeId })
               .select('address dispatchPreference')
               .lean()
 

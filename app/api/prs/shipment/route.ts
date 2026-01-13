@@ -153,17 +153,12 @@ export async function POST(request: Request) {
           ? orderDoc.companyId.toString('hex')
           : String(orderDoc.companyId)
         
-        // Try to find company by string ID (if ObjectId was converted to string)
-        // First try direct lookup by id field
-        const company: any = await Company.findOne({ id: companyObjectIdStr }).select('id').lean()
-        if (company) {
-          companyId = company.id
-        } else if (mongoose.default.Types.ObjectId.isValid(companyObjectIdStr)) {
-          // Fallback: if it's a valid ObjectId string, look up by _id and get string id
-          const companyObjectId = new mongoose.default.Types.ObjectId(companyObjectIdStr)
-          const companyByObjectId: any = await Company.findById(companyObjectId).select('id').lean()
-          if (companyByObjectId) {
-            companyId = companyByObjectId.id
+        // Try to find company by string ID
+        const companyIdStr = String(companyObjectIdStr)
+        if (/^\d{6}$/.test(companyIdStr)) {
+          const company: any = await Company.findOne({ id: companyIdStr }).select('id').lean()
+          if (company) {
+            companyId = company.id
           }
         }
       }

@@ -39,13 +39,7 @@ const LocationSchema = new Schema<ILocation>(
       required: true,
       unique: true,
       // Note: unique: true automatically creates an index, so index: true is redundant
-      validate: {
-        validator: function(v: string) {
-          // Must be exactly 6 digits, starting from 400001
-          return /^\d{6}$/.test(v) && parseInt(v) >= 400001 && parseInt(v) < 500000
-        },
-        message: 'Location ID must be a 6-digit numeric string between 400001-499999 (e.g., "400001")'
-      }
+      
     },
     name: {
       type: String,

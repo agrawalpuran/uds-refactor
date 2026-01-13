@@ -31,10 +31,33 @@ export async function GET(
 
     // Find order and verify vendor authorization
     }
-    const order = await Order.findOne({ id: orderId, vendorId })
-      .populate('employeeId', 'id firstName lastName email')
-      .populate('companyId', 'id name')
-      .populate('items.uniformId', 'id name')
+    const order = await Order.findOne({ id: orderId, vendorId }).lean()
+    
+    // Manually populate employeeId, companyId, and items.uniformId since populate doesn't work with string IDs
+    if (order) {
+      if (order.employeeId) {
+        const employee = await Employee.findOne({ id: order.employeeId }).select('id firstName lastName email').lean()
+        if (employee) {
+          (order as any).employeeId = employee
+        }
+      }
+      if (order.companyId) {
+        const company = await Company.findOne({ id: order.companyId }).select('id name').lean()
+        if (company) {
+          (order as any).companyId = company
+        }
+      }
+      if (order.items && Array.isArray(order.items)) {
+        for (const item of order.items) {
+          if (item.uniformId) {
+            const uniform = await Uniform.findOne({ id: item.uniformId }).select('id name').lean()
+            if (uniform) {
+              (item as any).uniformId = uniform
+            }
+          }
+        }
+      }
+    }
       .lean()
 
     if (!order) {
