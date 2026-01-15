@@ -53,9 +53,10 @@ const CompanyShippingProviderSchema = new Schema<ICompanyShippingProvider>(
       index: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     providerId: {

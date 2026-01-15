@@ -100,8 +100,28 @@ export async function POST(request: Request) {
       }
 
       // Verify employee belongs to the same company - use string ID
-      const employeeCompanyId = String((employee as any).companyId)
-      if (employeeCompanyId !== companyId) {
+      // CRITICAL: Employee.companyId is stored as STRING ID (6-digit numeric), not ObjectId
+      let employeeCompanyId: string | null = null
+      if ((employee as any).companyId) {
+        if (typeof (employee as any).companyId === 'object' && (employee as any).companyId.id) {
+          // Populated companyId object
+          employeeCompanyId = (employee as any).companyId.id
+        } else if (typeof (employee as any).companyId === 'string') {
+          // String ID (could be ObjectId string or company ID string)
+          if (/^[A-Za-z0-9_-]{1,50}$/.test((employee as any).companyId)) {
+            // It's an alphanumeric company ID string
+            employeeCompanyId = (employee as any).companyId
+          } else {
+            // It's an ObjectId string, need to look up the company
+            const company = await Company.findOne({ _id: (employee as any).companyId }).select('id').lean()
+            if (company) {
+              employeeCompanyId = (company as any).id
+            }
+          }
+        }
+      }
+      
+      if (!employeeCompanyId || employeeCompanyId !== companyId) {
         return NextResponse.json({ 
           error: `Employee ${adminId} does not belong to your company` 
         }, { status: 403 })
@@ -318,11 +338,34 @@ export async function GET(request: Request) {
     
     console.log(`[GET /api/locations/admin] Total employees before filtering: ${employees.length}`)
     
+    // CRITICAL: Ensure employee names are decrypted (safety check)
+    // Even though getEmployeesByCompany/getEmployeesByLocation should decrypt,
+    // we add explicit decryption here as a safety measure
+    const { decrypt } = require('@/lib/utils/encryption')
+    const decryptedEmployees = employees.map((emp: any) => {
+      if (!emp) return null
+      const decrypted: any = { ...emp }
+      const sensitiveFields = ['firstName', 'lastName', 'email', 'designation']
+      
+      for (const field of sensitiveFields) {
+        if (decrypted[field] && typeof decrypted[field] === 'string' && decrypted[field].includes(':')) {
+          try {
+            decrypted[field] = decrypt(decrypted[field])
+          } catch (error) {
+            // If decryption fails, keep original value
+            console.warn(`[GET /api/locations/admin] Failed to decrypt employee ${field}:`, error)
+          }
+        }
+      }
+      
+      return decrypted
+    }).filter((emp: any) => emp !== null)
+    
     // Return simplified employee list for dropdown
-    const eligibleEmployees = employees
+    const eligibleEmployees = decryptedEmployees
       .filter((emp: any) => {
         const isActive = emp.status === 'active'
-        if (!isActive && employees.length > 0) {
+        if (!isActive && decryptedEmployees.length > 0) {
           console.log(`[GET /api/locations/admin] Filtering out inactive employee: ${emp.employeeId || emp.id} (status: ${emp.status})`)
         }
         return isActive

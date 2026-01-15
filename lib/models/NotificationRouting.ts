@@ -12,9 +12,9 @@ import mongoose, { Schema, Document } from 'mongoose'
  * - Support custom email addresses
  */
 export interface INotificationRouting extends Document {
-  routingId: string // Numeric ID (6-12 digits, e.g., "700001")
+  routingId: string // Alphanumeric ID (e.g., "ROUTE-000001")
   eventId: string // Foreign key → NotificationEvent.eventId
-  companyId: string // String ID reference to Company (6-digit numeric string)
+  companyId: string // String ID reference to Company (alphanumeric)
   sendToEmployee: boolean // Send to employee who raised the order/PR
   sendToVendor: boolean // Send to vendor assigned to the order
   sendToLocationAdmin: boolean // Send to location admin
@@ -34,10 +34,10 @@ const NotificationRoutingSchema = new Schema<INotificationRouting>(
       index: true,
       validate: {
         validator: function(v: string) {
-          // Must be 6-12 digits
-          return /^\d{6,12}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Routing ID must be a 6-12 digit numeric string (e.g., "700001")'
+        message: 'Routing ID must be alphanumeric (1-50 characters)'
       }
     },
     eventId: {
@@ -51,9 +51,10 @@ const NotificationRoutingSchema = new Schema<INotificationRouting>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     sendToEmployee: {

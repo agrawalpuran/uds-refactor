@@ -26,10 +26,10 @@ const CategorySchema = new Schema<ICategory>(
       unique: true,
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Category ID must be a 6-digit numeric string (e.g., "500001")'
+        message: 'Category ID must be alphanumeric (1-50 characters)'
       }
     },
     name: {

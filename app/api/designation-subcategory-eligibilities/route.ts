@@ -311,16 +311,16 @@ export async function POST(request: NextRequest) {
       status: 'active' as const
     }
     
-    // Validate string IDs before create
-    if (!/^\d{6}$/.test(eligibilityData.subCategoryId)) {
+    // Validate string IDs before create (alphanumeric format)
+    if (!/^[A-Za-z0-9_-]{1,50}$/.test(eligibilityData.subCategoryId)) {
       return NextResponse.json(
         { error: `Invalid subCategoryId format: ${eligibilityData.subCategoryId}` },
         { status: 400 }
       )
     }
-    if (!/^\d{6}$/.test(eligibilityData.companyId)) {
+    if (!eligibilityData.companyId || typeof eligibilityData.companyId !== 'string' || eligibilityData.companyId.trim() === '') {
       return NextResponse.json(
-        { error: `Invalid companyId format: ${eligibilityData.companyId}` },
+        { error: `Invalid companyId: companyId is required` },
         { status: 400 }
       )
     }

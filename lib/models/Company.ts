@@ -24,7 +24,7 @@ export interface ICompany extends Document {
   require_company_admin_approval?: boolean // @deprecated Use require_company_admin_po_approval instead
   // Shipping Configuration
   shipmentRequestMode?: 'MANUAL' | 'AUTOMATIC' // Shipment request mode (company-level, default: MANUAL)
-  adminId?: string // String ID reference to Employee (6-digit numeric string)
+  adminId?: string // String ID reference to Employee (alphanumeric)
   // Structured address fields
   address_line_1?: string // L1: House / Building / Street (OPTIONAL)
   address_line_2?: string // L2: Area / Locality (OPTIONAL)
@@ -44,13 +44,6 @@ const CompanySchema = new Schema<ICompany>(
       required: true,
       unique: true,
       // Note: unique: true automatically creates an index, so index: true is redundant
-      validate: {
-        validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
-        },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
-      }
     },
     name: {
       type: String,

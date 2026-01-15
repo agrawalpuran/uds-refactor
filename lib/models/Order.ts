@@ -1,8 +1,8 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IOrderItem {
-  uniformId: string // String ID reference to Uniform (6-digit numeric string)
-  productId: string // Numeric/string product ID for correlation
+  uniformId: string // String ID reference to Uniform (alphanumeric)
+  productId: string // String product ID for correlation
   uniformName: string
   size: string
   quantity: number
@@ -15,16 +15,16 @@ export interface IOrderItem {
 
 export interface IOrder extends Document {
   id: string
-  employeeId: string // String ID reference to Employee (6-digit numeric string)
-  employeeIdNum: string // Numeric/string employee ID for correlation
+  employeeId: string // String ID reference to Employee (alphanumeric)
+  employeeIdNum: string // String employee ID for correlation
   employeeName: string
   items: IOrderItem[]
   total: number
   status: 'Awaiting approval' | 'Awaiting fulfilment' | 'Dispatched' | 'Delivered'
   orderDate: Date
   dispatchLocation: string
-  companyId: string // String ID reference to Company (6-digit numeric string)
-  companyIdNum: number // Numeric company ID for correlation
+  companyId: string // String ID reference to Company (alphanumeric)
+  companyIdNum: number // Numeric company ID for backward compatibility
   // Structured shipping address fields
   shipping_address_line_1: string // L1: House / Building / Street (REQUIRED)
   shipping_address_line_2?: string // L2: Area / Locality (OPTIONAL)
@@ -35,7 +35,7 @@ export interface IOrder extends Document {
   shipping_country: string // Country name (DEFAULT: 'India')
   estimatedDeliveryTime: string
   parentOrderId?: string // ID of the parent order if this is a split order
-  vendorId?: string // Vendor ID (6-digit numeric string, e.g., "100001") if this order is for a specific vendor
+  vendorId?: string // Vendor ID (alphanumeric string) if this order is for a specific vendor
   vendorName?: string // Vendor name for display
   isPersonalPayment?: boolean // Whether this is a personal payment order (beyond eligibility)
   personalPaymentAmount?: number // Amount paid personally (if isPersonalPayment is true)
@@ -44,7 +44,7 @@ export interface IOrder extends Document {
   // PR (Purchase Requisition) Extension Fields
   pr_number?: string // Client/customer generated PR number (unique per company)
   pr_date?: Date // Date PR was raised
-  pr_status?: 'DRAFT' | 'SUBMITTED' | 'PENDING_SITE_ADMIN_APPROVAL' | 'SITE_ADMIN_APPROVED' | 'PENDING_COMPANY_ADMIN_APPROVAL' | 'COMPANY_ADMIN_APPROVED' | 'REJECTED_BY_SITE_ADMIN' | 'REJECTED_BY_COMPANY_ADMIN' | 'PO_CREATED' // PR approval status
+  pr_status?: 'DRAFT' | 'SUBMITTED' | 'PENDING_SITE_ADMIN_APPROVAL' | 'SITE_ADMIN_APPROVED' | 'PENDING_COMPANY_ADMIN_APPROVAL' | 'COMPANY_ADMIN_APPROVED' | 'REJECTED_BY_SITE_ADMIN' | 'REJECTED_BY_COMPANY_ADMIN' | 'PO_CREATED' | 'FULLY_DELIVERED' // PR approval status
   site_admin_approved_by?: string // Site Admin who approved (String ID ref: Employee)
   site_admin_approved_at?: Date // Timestamp of Site Admin approval
   company_admin_approved_by?: string // Company Admin who approved (String ID ref: Employee)
@@ -83,10 +83,10 @@ const OrderItemSchema = new Schema<IOrderItem>({
     required: true,
     validate: {
       validator: function(v: string) {
-        // Must be exactly 6 digits
-        return /^\d{6}$/.test(v)
+        // Must be alphanumeric (1-50 characters)
+        return /^[A-Za-z0-9_-]{1,50}$/.test(v)
       },
-      message: 'Uniform ID must be a 6-digit numeric string (e.g., "400001")'
+      message: 'Uniform ID must be alphanumeric (1-50 characters)'
     }
   },
   productId: {
@@ -144,10 +144,10 @@ const OrderSchema = new Schema<IOrder>(
       required: true,
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Employee ID must be a 6-digit numeric string (e.g., "300001")'
+        message: 'Employee ID must be alphanumeric (1-50 characters)'
       }
     },
     employeeIdNum: {
@@ -185,13 +185,6 @@ const OrderSchema = new Schema<IOrder>(
     companyId: {
       type: String,
       required: true,
-      validate: {
-        validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
-        },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
-      }
     },
     companyIdNum: {
       type: Number,
@@ -255,14 +248,15 @@ const OrderSchema = new Schema<IOrder>(
       index: true,
     },
     vendorId: {
-      type: String, // Changed to String to store 6-digit numeric vendor ID
+      type: String, // String to store alphanumeric vendor ID
       required: true, // vendorId is required for all orders
       index: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v);
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v);
         },
-        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Vendor ID must be alphanumeric (1-50 characters)'
       }
     },
     vendorName: {
@@ -309,7 +303,8 @@ const OrderSchema = new Schema<IOrder>(
         'COMPANY_ADMIN_APPROVED',
         'REJECTED_BY_SITE_ADMIN',
         'REJECTED_BY_COMPANY_ADMIN',
-        'PO_CREATED'
+        'PO_CREATED',
+        'FULLY_DELIVERED'
       ],
       default: 'DRAFT',
       required: false,
@@ -338,13 +333,13 @@ const OrderSchema = new Schema<IOrder>(
       type: String,
       required: false,
       trim: true,
-      maxlength: 20,
-      // System-generated numeric ID (6-10 digits)
+      maxlength: 50,
+      // System-generated alphanumeric ID
       validate: {
         validator: function(v: string) {
-          return !v || /^\d{6,10}$/.test(v)
+          return !v || /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Shipment ID must be a 6-10 digit numeric string'
+        message: 'Shipment ID must be alphanumeric (1-50 characters)'
       }
     },
     shipmentReferenceNumber: {
@@ -440,10 +435,10 @@ const OrderSchema = new Schema<IOrder>(
       required: false,
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits if provided
-          return !v || /^\d{6}$/.test(v)
+          // Must be alphanumeric if provided
+          return !v || /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Indent ID must be a 6-digit numeric string (e.g., "500001")'
+        message: 'Indent ID must be alphanumeric (1-50 characters)'
       }
       // Index defined below via schema.index()
     },

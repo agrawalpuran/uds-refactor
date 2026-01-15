@@ -32,10 +32,10 @@ const VendorSchema = new Schema<IVendor>(
       // Note: unique: true automatically creates an index, so index: true is redundant
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Vendor ID must be alphanumeric (1-50 characters)'
       }
     },
     name: {

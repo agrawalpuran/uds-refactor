@@ -22,9 +22,9 @@ export interface IEmployee extends Document {
   state: string // State name (REQUIRED)
   pincode: string // Postal code (REQUIRED, 6 digits for India)
   country: string // Country name (DEFAULT: 'India')
-  companyId: string // String ID reference to Company (6-digit numeric string)
+  companyId: string // String ID reference to Company (alphanumeric)
   companyName?: string // Optional - derived from companyId, stored for display only
-  locationId?: string // String ID reference to Location (6-digit numeric string) - REQUIRED for new employees
+  locationId?: string // String ID reference to Location (alphanumeric) - REQUIRED for new employees
   eligibility: {
     shirt: number
     pant: number
@@ -60,10 +60,10 @@ const EmployeeSchema = new Schema<IEmployee>(
       // Note: unique: true automatically creates an index, so index: true is redundant
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Employee ID must be a 6-digit numeric string (e.g., "300001")'
+        message: 'Employee ID must be alphanumeric (1-50 characters)'
       }
     },
     employeeId: {
@@ -73,10 +73,10 @@ const EmployeeSchema = new Schema<IEmployee>(
       // Note: unique: true automatically creates an index, so index: true is redundant
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Employee ID must be a 6-digit numeric string (e.g., "300001")'
+        message: 'Employee ID must be alphanumeric (1-50 characters)'
       }
     },
     firstName: {
@@ -175,13 +175,6 @@ const EmployeeSchema = new Schema<IEmployee>(
     companyId: {
       type: String,
       required: true,
-      validate: {
-        validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
-        },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
-      }
     },
     companyName: {
       type: String,
@@ -289,41 +282,9 @@ EmployeeSchema.pre('save', function (next) {
   next()
 })
 
-// Decrypt sensitive fields after retrieving
-EmployeeSchema.post(['find', 'findOne', 'findOneAndUpdate'], function (docs) {
-  if (!docs) return
-  
-  const documents = Array.isArray(docs) ? docs : [docs]
-  const sensitiveFields: (keyof IEmployee)[] = ['email', 'mobile', 'firstName', 'lastName', 'designation']
-  const addressFields: (keyof IEmployee)[] = ['address_line_1', 'address_line_2', 'address_line_3', 'city', 'state', 'pincode']
-  
-  documents.forEach((doc: any) => {
-    if (doc && typeof doc === 'object') {
-      // Decrypt regular sensitive fields
-      for (const field of sensitiveFields) {
-        if (doc[field] && typeof doc[field] === 'string') {
-          try {
-            doc[field] = decrypt(doc[field])
-          } catch (error) {
-            // If decryption fails, keep original value
-            console.warn(`Failed to decrypt field ${field}:`, error)
-          }
-        }
-      }
-      // Decrypt address fields
-      for (const field of addressFields) {
-        if (doc[field] && typeof doc[field] === 'string') {
-          try {
-            doc[field] = decrypt(doc[field])
-          } catch (error) {
-            // If decryption fails, keep original value
-            console.warn(`Failed to decrypt address field ${field}:`, error)
-          }
-        }
-      }
-    }
-  })
-})
+// SECURITY: Decryption removed from backend - data is now decrypted only in frontend
+// This ensures encrypted data remains encrypted in database and API responses
+// Decryption happens client-side for authorized users (Location Admin, Company Admin, Employee themselves)
 
 const Employee = mongoose.models.Employee || mongoose.model<IEmployee>('Employee', EmployeeSchema)
 

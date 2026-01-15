@@ -13,10 +13,10 @@ import mongoose, { Schema, Document } from 'mongoose'
  * - Employees reference Location (via location_id in Employee model)
  */
 export interface ILocation extends Document {
-  id: string // 6-digit numeric ID (e.g., "400001")
+  id: string // Alphanumeric ID (e.g., "LOC-000001")
   name: string // Location name (e.g., "Mumbai Office", "Delhi Warehouse")
-  companyId: string // String ID reference to Company (6-digit numeric string)
-  adminId?: string // String ID reference to Employee (6-digit numeric string) - REQUIRED for proper location management
+  companyId: string // String ID reference to Company (alphanumeric)
+  adminId?: string // String ID reference to Employee (alphanumeric) - REQUIRED for proper location management
   // Structured address fields
   address_line_1: string // L1: House / Building / Street (REQUIRED)
   address_line_2?: string // L2: Area / Locality (OPTIONAL)
@@ -49,13 +49,6 @@ const LocationSchema = new Schema<ILocation>(
     companyId: {
       type: String,
       required: true,
-      validate: {
-        validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
-        },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
-      }
     },
     adminId: {
       type: String,

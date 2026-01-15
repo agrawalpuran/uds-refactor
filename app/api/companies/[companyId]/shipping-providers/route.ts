@@ -96,6 +96,7 @@ export async function POST(
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
     const { providerId, isEnabled = true, isDefault = false, credentials, createdBy } = body
 
     if (!companyId) {
@@ -110,13 +111,15 @@ export async function POST(
         { error: 'Provider ID is required' },
         { status: 400 }
       )
+    }
 
-    // Validate company ID format (6-digit numeric string)
-    if (!/^\d{6}$/.test(companyId)) {
+    // Validate company ID format (alphanumeric string)
+    if (!/^[A-Za-z0-9_-]{1,50}$/.test(companyId)) {
       return NextResponse.json(
-        { error: 'Company ID must be a 6-digit numeric string' },
+        { error: 'Company ID must be alphanumeric (1-50 characters)' },
         { status: 400 }
       )
+    }
 
     // Validate provider exists and is active
     const provider: any = await ShipmentServiceProvider.findOne({ 
@@ -290,10 +293,10 @@ export async function PUT(
       )
     }
 
-    // Validate company ID format
-    if (!/^\d{6}$/.test(companyId)) {
+    // Validate company ID format (alphanumeric)
+    if (!/^[A-Za-z0-9_-]{1,50}$/.test(companyId)) {
       return NextResponse.json(
-        { error: 'Company ID must be a 6-digit numeric string' },
+        { error: 'Company ID must be alphanumeric (1-50 characters)' },
         { status: 400 }
       )
     }
@@ -354,9 +357,7 @@ export async function PUT(
     }
 
     return NextResponse.json(response, { status: 200 })
-    }
   } catch (error: any) {
-    console.error('API Error in /api/companies/[companyId]/shipping-providers PUT:', error)
     console.error('API Error in /api/companies/[companyId]/shipping-providers PUT:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
@@ -396,7 +397,6 @@ export async function PUT(
       { error: errorMessage },
       { status: 500 }
     )
-    }
   }
 }
 

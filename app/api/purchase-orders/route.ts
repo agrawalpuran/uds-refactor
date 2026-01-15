@@ -17,6 +17,8 @@ export async function POST(request: Request) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
+    
     const { orderIds, poNumber, poDate, companyId, createdByUserId } = body
 
     // Validate required fields
@@ -25,34 +27,37 @@ export async function POST(request: Request) {
         { error: 'At least one order ID is required' },
         { status: 400 }
       )
+    }
 
     if (!poNumber || !poNumber.trim()) {
       return NextResponse.json(
         { error: 'PO Number is required' },
         { status: 400 }
       )
+    }
 
     if (!poDate) {
       return NextResponse.json(
         { error: 'PO Date is required' },
         { status: 400 }
       )
-
     }
+    
     if (!companyId) {
       return NextResponse.json(
         { error: 'Company ID is required' },
         { status: 400 }
       )
+    }
 
     if (!createdByUserId) {
       return NextResponse.json(
         { error: 'Created By User ID is required' },
         { status: 400 }
       )
+    }
 
     // Parse PO date
-    }
     const poDateObj = new Date(poDate)
     
     console.log('[API /purchase-orders POST] Creating PO with:', {
@@ -75,7 +80,7 @@ export async function POST(request: Request) {
       
       console.log('[API /purchase-orders POST] PO creation successful:', result)
       return NextResponse.json(result, { status: 201 })
-  } catch (createError: any) {
+    } catch (createError: any) {
       console.error('[API /purchase-orders POST] Error in createPurchaseOrderFromPRs:', createError)
       console.error('[API /purchase-orders POST] Error stack:', createError.stack)
       // Re-throw to be caught by outer catch block
@@ -107,6 +112,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -117,6 +123,7 @@ export async function POST(request: Request) {
       },
       { status: 500 }
     )
+  }
 }
 
 export async function GET(request: Request) {
@@ -131,6 +138,7 @@ export async function GET(request: Request) {
         { error: 'Company ID is required' },
         { status: 400 }
       )
+    }
 
     // Import PurchaseOrder model
     const PurchaseOrder = (await import('@/lib/models/PurchaseOrder')).default
@@ -139,30 +147,29 @@ export async function GET(request: Request) {
 
     // Build query
     const Company = (await import('@/lib/models/Company')).default
-    }
     const company = await Company.findOne({ id: companyId })
     if (!company) {
       return NextResponse.json(
         { error: 'Company not found' },
         { status: 404 }
       )
-
     }
+    
     const query: any = { companyId: company.id }
 
     if (vendorId) {
-      // vendorId is now stored as numeric ID (6-digit string), not ObjectId
-      // Validate it's a 6-digit string
-      if (/^\d{6}$/.test(vendorId)) {
+      // vendorId is now stored as alphanumeric string, not ObjectId
+      // Validate it's alphanumeric
+      if (/^[A-Za-z0-9_-]{1,50}$/.test(vendorId)) {
         query.vendorId = vendorId
       } else {
         // If it's not a 6-digit string, try to find vendor by string ID
         const Vendor = (await import('@/lib/models/Vendor')).default
         const vendor = await Vendor.findOne({ id: vendorId })
-    if (!vendor) {
-      return NextResponse.json({ error: 'Vendor not found' }, { status: 404 })
-    }
-    if (vendor) {
+        if (!vendor) {
+          return NextResponse.json({ error: 'Vendor not found' }, { status: 404 })
+        }
+        if (vendor) {
           query.vendorId = vendor.id
         }
       }
@@ -204,6 +211,8 @@ export async function GET(request: Request) {
           shippingStatus // Derived, not persisted
         }
       })
+    )
+    
     // Convert to plain objects - use string IDs
     const plainPOs = purchaseOrdersWithDetails.map((po: any) => {
       const plain: any = { ...po }
@@ -225,7 +234,6 @@ export async function GET(request: Request) {
     return NextResponse.json(plainPOs)
   } catch (error: any) {
     console.error('API Error in /api/purchase-orders GET:', error)
-    console.error('API Error in /api/purchase-orders GET:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -237,6 +245,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -246,6 +255,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -255,6 +265,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -263,4 +274,3 @@ export async function GET(request: Request) {
     )
   }
 }
-

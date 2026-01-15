@@ -9,7 +9,7 @@ export interface ItemEligibility {
 
 export interface IDesignationProductEligibility extends Document {
   id: string
-  companyId: string // String ID reference to Company (6-digit numeric string)
+  companyId: string // String ID reference to Company (alphanumeric)
   companyName: string
   designation: string // e.g., "General Manager", "Office Admin"
   gender?: 'male' | 'female' | 'unisex' // Gender filter: 'male', 'female', or 'unisex' (defaults to 'unisex' for backward compatibility)
@@ -48,9 +48,10 @@ const DesignationProductEligibilitySchema = new Schema<IDesignationProductEligib
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     companyName: { type: String, required: true },

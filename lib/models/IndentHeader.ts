@@ -4,10 +4,10 @@ export interface IIndentHeader extends Document {
   id: string
   client_indent_number: string // Unique per company
   indent_date: Date
-  companyId: string // String ID reference to Company (6-digit numeric string)
-  site_id?: string // String ID reference to Location (6-digit numeric string) - Optional
+  companyId: string // String ID reference to Company (alphanumeric)
+  site_id?: string // String ID reference to Location (alphanumeric) - Optional
   status: 'CREATED' | 'ORDERED' | 'FULFILLED' | 'CLOSED'
-  created_by_user_id: string // String ID reference to Employee (6-digit numeric string)
+  created_by_user_id: string // String ID reference to Employee (alphanumeric)
   created_by_role: 'COMPANY_ADMIN' | 'SITE_ADMIN' | 'EMPLOYEE'
   createdAt?: Date
   updatedAt?: Date
@@ -36,9 +36,10 @@ const IndentHeaderSchema = new Schema<IIndentHeader>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     site_id: {
@@ -46,9 +47,10 @@ const IndentHeaderSchema = new Schema<IIndentHeader>(
       required: false,
       validate: {
         validator: function(v: string) {
-          return !v || /^\d{6}$/.test(v)
+          // Must be alphanumeric if provided
+          return !v || /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Site ID must be a 6-digit numeric string (e.g., "400001")'
+        message: 'Site ID must be alphanumeric (1-50 characters)'
       }
     },
     status: {
@@ -63,9 +65,10 @@ const IndentHeaderSchema = new Schema<IIndentHeader>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'User ID must be a 6-digit numeric string (e.g., "300001")'
+        message: 'User ID must be alphanumeric (1-50 characters)'
       }
     },
     created_by_role: {

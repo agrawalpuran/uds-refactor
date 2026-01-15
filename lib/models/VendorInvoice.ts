@@ -2,8 +2,8 @@ import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IVendorInvoice extends Document {
   id: string
-  vendor_indent_id: string // String ID reference to VendorIndent (6-digit numeric string)
-  vendor_id: string // String ID reference to Vendor (6-digit numeric string)
+  vendor_indent_id: string // String ID reference to VendorIndent (alphanumeric)
+  vendor_id: string // String ID reference to Vendor (alphanumeric)
   invoice_number: string
   invoice_date: Date
   invoice_amount: number
@@ -24,9 +24,10 @@ const VendorInvoiceSchema = new Schema<IVendorInvoice>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor Indent ID must be a 6-digit numeric string'
+        message: 'Vendor Indent ID must be alphanumeric (1-50 characters)'
       }
     },
     vendor_id: {
@@ -34,9 +35,10 @@ const VendorInvoiceSchema = new Schema<IVendorInvoice>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Vendor ID must be alphanumeric (1-50 characters)'
       }
     },
     invoice_number: {

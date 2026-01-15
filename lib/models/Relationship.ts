@@ -2,8 +2,8 @@ import mongoose, { Schema, Document } from 'mongoose'
 
 // Product-Company relationship (many-to-many)
 export interface IProductCompany extends Document {
-  productId: string // String ID reference to Uniform/Product (6-digit numeric string)
-  companyId: string // String ID reference to Company (6-digit numeric string)
+  productId: string // String ID reference to Uniform/Product (alphanumeric)
+  companyId: string // String ID reference to Company (alphanumeric)
   createdAt?: Date
   updatedAt?: Date
 }
@@ -17,9 +17,9 @@ const ProductCompanySchema = new Schema<IProductCompany>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Product ID must be a 6-digit numeric string (e.g., "200001")'
+        message: 'Product ID must be alphanumeric (1-50 characters)'
       }
     },
     companyId: {
@@ -27,9 +27,9 @@ const ProductCompanySchema = new Schema<IProductCompany>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
   },
@@ -46,8 +46,8 @@ ProductCompanySchema.index({ productId: 1, companyId: 1 }, { unique: true })
 // This stores which vendor supplies which product
 // Company access is validated via ProductCompany relationships
 export interface IProductVendor extends Document {
-  productId: string // String ID reference to Uniform/Product (6-digit numeric string)
-  vendorId: string // String ID reference to Vendor (6-digit numeric string)
+  productId: string // String ID reference to Uniform/Product (alphanumeric)
+  vendorId: string // String ID reference to Vendor (alphanumeric)
   createdAt?: Date
   updatedAt?: Date
 }
@@ -61,9 +61,9 @@ const ProductVendorSchema = new Schema<IProductVendor>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Product ID must be a 6-digit numeric string (e.g., "200001")'
+        message: 'Product ID must be alphanumeric (1-50 characters)'
       }
     },
     vendorId: {
@@ -71,9 +71,9 @@ const ProductVendorSchema = new Schema<IProductVendor>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Vendor ID must be alphanumeric (1-50 characters)'
       }
     },
   },
@@ -88,8 +88,8 @@ ProductVendorSchema.index({ productId: 1, vendorId: 1 }, { unique: true })
 
 // Vendor-Company relationship (many-to-many)
 export interface IVendorCompany extends Document {
-  vendorId: string // String ID reference to Vendor (6-digit numeric string)
-  companyId: string // String ID reference to Company (6-digit numeric string)
+  vendorId: string // String ID reference to Vendor (alphanumeric)
+  companyId: string // String ID reference to Company (alphanumeric)
   createdAt?: Date
   updatedAt?: Date
 }
@@ -103,9 +103,9 @@ const VendorCompanySchema = new Schema<IVendorCompany>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Vendor ID must be alphanumeric (1-50 characters)'
       }
     },
     companyId: {
@@ -113,9 +113,9 @@ const VendorCompanySchema = new Schema<IVendorCompany>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
   },

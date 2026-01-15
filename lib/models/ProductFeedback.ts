@@ -3,12 +3,12 @@ import mongoose, { Schema, Document } from 'mongoose'
 export interface IProductFeedback extends Document {
   orderId: string // Order ID reference
   productId: string // Product/Uniform ID
-  uniformId?: string // String ID reference to Uniform (6-digit numeric string)
-  employeeId: string // String ID reference to Employee (6-digit numeric string)
-  employeeIdNum: string // Numeric employee ID for correlation
-  companyId: string // String ID reference to Company (6-digit numeric string)
-  companyIdNum: number // Numeric company ID for correlation
-  vendorId?: string // String ID reference to Vendor (6-digit numeric string)
+  uniformId?: string // String ID reference to Uniform (alphanumeric)
+  employeeId: string // String ID reference to Employee (alphanumeric)
+  employeeIdNum: string // String employee ID for correlation
+  companyId: string // String ID reference to Company (alphanumeric)
+  companyIdNum: number // Numeric company ID for backward compatibility
+  vendorId?: string // String ID reference to Vendor (alphanumeric)
   rating: number // Rating from 1 to 5
   comment?: string // Optional feedback comment
   viewedBy?: string[] // Array of admin emails who have viewed this feedback
@@ -34,9 +34,10 @@ const ProductFeedbackSchema = new Schema<IProductFeedback>(
       required: false,
       validate: {
         validator: function(v: string) {
-          return !v || /^\d{6}$/.test(v)
+          // Must be alphanumeric if provided
+          return !v || /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Uniform ID must be a 6-digit numeric string (e.g., "200001")'
+        message: 'Uniform ID must be alphanumeric (1-50 characters)'
       }
     },
     employeeId: {
@@ -44,9 +45,10 @@ const ProductFeedbackSchema = new Schema<IProductFeedback>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Employee ID must be a 6-digit numeric string (e.g., "300001")'
+        message: 'Employee ID must be alphanumeric (1-50 characters)'
       }
     },
     employeeIdNum: {
@@ -59,9 +61,10 @@ const ProductFeedbackSchema = new Schema<IProductFeedback>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     companyIdNum: {
@@ -74,9 +77,10 @@ const ProductFeedbackSchema = new Schema<IProductFeedback>(
       required: false,
       validate: {
         validator: function(v: string) {
-          return !v || /^\d{6}$/.test(v)
+          // Must be alphanumeric if provided
+          return !v || /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Vendor ID must be alphanumeric (1-50 characters)'
       }
     },
     rating: {

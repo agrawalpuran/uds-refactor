@@ -119,12 +119,12 @@ const InvoiceSchema = new Schema<IInvoice>(
       type: String,
       required: true,
       index: true,
-      // 6-digit numeric vendor ID
+      // Alphanumeric vendor ID
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Vendor ID must be alphanumeric (1-50 characters)'
       }
     },
     companyId: {

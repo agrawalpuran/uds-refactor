@@ -1,13 +1,13 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IPurchaseOrder extends Document {
-  id: string // Unique identifier (numeric/string)
-  companyId: string // String ID reference to Company (6-digit numeric string)
-  vendorId: string // Vendor numeric ID (6-digit string, e.g., "100001")
+  id: string // Unique identifier (alphanumeric)
+  companyId: string // String ID reference to Company (alphanumeric)
+  vendorId: string // Vendor alphanumeric ID
   client_po_number: string // Client/customer generated PO number (NOT unique - can repeat)
   po_date: Date // Date PO was created
   po_status: 'CREATED' | 'SENT_TO_VENDOR' | 'ACKNOWLEDGED' | 'IN_FULFILMENT' | 'COMPLETED' | 'CANCELLED' // PO status
-  created_by_user_id: string // String ID reference to Employee (6-digit numeric string)
+  created_by_user_id: string // String ID reference to Employee (alphanumeric)
   createdAt?: Date
   updatedAt?: Date
 }
@@ -25,9 +25,10 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     vendorId: {
@@ -36,10 +37,10 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
       index: true,
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Vendor ID must be alphanumeric (1-50 characters)'
       }
     },
     client_po_number: {
@@ -67,9 +68,10 @@ const PurchaseOrderSchema = new Schema<IPurchaseOrder>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'User ID must be a 6-digit numeric string (e.g., "300001")'
+        message: 'User ID must be alphanumeric (1-50 characters)'
       }
     },
   },

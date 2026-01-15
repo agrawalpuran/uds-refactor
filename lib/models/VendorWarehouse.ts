@@ -54,9 +54,10 @@ const VendorWarehouseSchema = new Schema<IVendorWarehouse>(
       index: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor ID must be a 6-digit numeric string'
+        message: 'Vendor ID must be alphanumeric (1-50 characters)'
       }
     },
     // companyId is deprecated but kept as optional for backward compatibility

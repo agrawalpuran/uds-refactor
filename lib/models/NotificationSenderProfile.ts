@@ -10,8 +10,8 @@ import { encrypt, decrypt } from '../utils/encryption'
  * Provider configuration is encrypted for security (API keys, passwords, etc.).
  */
 export interface INotificationSenderProfile extends Document {
-  senderId: string // Numeric ID (6-12 digits, e.g., "800001")
-  companyId: string // String ID reference to Company (6-digit numeric string)
+  senderId: string // Alphanumeric ID (e.g., "SNDR-000001")
+  companyId: string // String ID reference to Company (alphanumeric)
   senderName: string // Display name for "From" field (e.g., "UDS Support")
   senderEmail: string // "From" email address
   replyToEmail?: string // Reply-To email address (nullable, defaults to senderEmail)
@@ -32,10 +32,10 @@ const NotificationSenderProfileSchema = new Schema<INotificationSenderProfile>(
       index: true,
       validate: {
         validator: function(v: string) {
-          // Must be 6-12 digits
-          return /^\d{6,12}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Sender ID must be a 6-12 digit numeric string (e.g., "800001")'
+        message: 'Sender ID must be alphanumeric (1-50 characters)'
       }
     },
     companyId: {
@@ -43,9 +43,10 @@ const NotificationSenderProfileSchema = new Schema<INotificationSenderProfile>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     senderName: {

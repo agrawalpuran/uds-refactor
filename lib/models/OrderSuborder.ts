@@ -2,9 +2,9 @@ import mongoose, { Schema, Document } from 'mongoose'
 
 export interface IOrderSuborder extends Document {
   id: string
-  order_id: string // String ID reference to Order (6-digit numeric string)
-  vendor_id: string // String ID reference to Vendor (6-digit numeric string)
-  vendor_indent_id?: string // String ID reference to VendorIndent (6-digit numeric string)
+  order_id: string // String ID reference to Order (alphanumeric)
+  vendor_id: string // String ID reference to Vendor (alphanumeric)
+  vendor_indent_id?: string // String ID reference to VendorIndent (alphanumeric)
   // Shipping & Tracking (AUTHORITATIVE HERE)
   shipper_name?: string
   consignment_number?: string
@@ -28,9 +28,10 @@ const OrderSuborderSchema = new Schema<IOrderSuborder>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Order ID must be a 6-digit numeric string'
+        message: 'Order ID must be alphanumeric (1-50 characters)'
       }
     },
     vendor_id: {
@@ -38,9 +39,10 @@ const OrderSuborderSchema = new Schema<IOrderSuborder>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Vendor ID must be alphanumeric (1-50 characters)'
       }
     },
     vendor_indent_id: {
@@ -48,9 +50,10 @@ const OrderSuborderSchema = new Schema<IOrderSuborder>(
       required: false,
       validate: {
         validator: function(v: string) {
-          return !v || /^\d{6}$/.test(v)
+          // Must be alphanumeric if provided
+          return !v || /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Vendor Indent ID must be a 6-digit numeric string'
+        message: 'Vendor Indent ID must be alphanumeric (1-50 characters)'
       }
     },
     // Shipping & Tracking Fields

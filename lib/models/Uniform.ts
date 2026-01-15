@@ -4,13 +4,13 @@ export interface IUniform extends Document {
   id: string
   name: string
   category: 'shirt' | 'pant' | 'shoe' | 'jacket' | 'accessory' // Legacy field - kept for backward compatibility
-  categoryId?: string // String ID reference to ProductCategory (6-digit numeric string)
+  categoryId?: string // String ID reference to ProductCategory (alphanumeric)
   gender: 'male' | 'female' | 'unisex'
   sizes: string[]
   price: number
   image: string
   sku: string
-  companyIds: string[] // Array of string IDs referencing Companies (6-digit numeric strings)
+  companyIds: string[] // Array of string IDs referencing Companies (alphanumeric)
   // Optional SKU attributes (exactly 3)
   attribute1_name?: string
   attribute1_value?: string | number
@@ -31,10 +31,10 @@ const UniformSchema = new Schema<IUniform>(
       // Note: unique: true automatically creates an index, so index: true is redundant
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Uniform/Product ID must be a 6-digit numeric string (e.g., "200001")'
+        message: 'Uniform/Product ID must be alphanumeric (1-50 characters)'
       }
     },
     name: {
@@ -51,10 +51,10 @@ const UniformSchema = new Schema<IUniform>(
       required: false,
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits if provided
-          return !v || /^\d{6}$/.test(v)
+          // Must be alphanumeric if provided
+          return !v || /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Category ID must be a 6-digit numeric string (e.g., "700001")'
+        message: 'Category ID must be alphanumeric (1-50 characters)'
       }
     },
     gender: {
@@ -84,10 +84,10 @@ const UniformSchema = new Schema<IUniform>(
       default: [],
       validate: {
         validator: function(v: string[]) {
-          // All IDs must be exactly 6 digits
-          return v.every(id => /^\d{6}$/.test(id))
+          // All IDs must be alphanumeric
+          return v.every(id => /^[A-Za-z0-9_-]{1,50}$/.test(id))
         },
-        message: 'All company IDs must be 6-digit numeric strings (e.g., "100001")'
+        message: 'All company IDs must be alphanumeric (1-50 characters each)'
       }
     },
     // Optional SKU attributes (exactly 3)

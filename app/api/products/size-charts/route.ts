@@ -19,7 +19,7 @@ export async function GET(request: Request) {
 
     const productIds = productIdsParam
       .split(',')
-      .filter(id => /^\d{6}$/.test(id))
+      .filter(id => /^[A-Za-z0-9_-]{1,50}$/.test(id))
 
     if (productIds.length === 0) {
       return NextResponse.json({}, { status: 200 })

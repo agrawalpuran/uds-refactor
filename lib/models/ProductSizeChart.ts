@@ -37,10 +37,10 @@ const ProductSizeChartSchema = new Schema<IProductSizeChart>(
       // Note: index created via schema.index() below - don't use index: true here
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits (matching Uniform.id format)
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (matching Uniform.id format)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Product ID must be a 6-digit numeric string (e.g., "200001")'
+        message: 'Product ID must be alphanumeric (1-50 characters)'
       }
     },
     imageUrl: {

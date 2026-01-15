@@ -161,8 +161,8 @@ export default function ConsumerLogin() {
         } else if (employee.companyId.toString) {
           // Handle ObjectId or other objects with toString
           const companyIdStr = employee.companyId.toString()
-          // Check if it's a numeric ID (6 digits)
-          if (/^\d{6}$/.test(companyIdStr)) {
+          // Check if it's an alphanumeric ID
+          if (/^[A-Za-z0-9_-]{1,50}$/.test(companyIdStr)) {
             companyId = companyIdStr
           } else {
             // It might be an ObjectId, try to look it up via API

@@ -17,10 +17,10 @@ import mongoose, { Schema, Document } from 'mongoose'
 import Subcategory from './Subcategory'
 
 export interface IDesignationSubcategoryEligibility extends Document {
-  id: string // Unique 6-digit ID (e.g., "700001")
+  id: string // Unique alphanumeric ID (e.g., "ELIG-000001")
   designationId: string // Designation name (e.g., "General Manager", "Office Admin")
-  subCategoryId: string // String ID reference to Subcategory (6-digit numeric string) - REQUIRED
-  companyId: string // String ID reference to Company (6-digit numeric string) - REQUIRED
+  subCategoryId: string // String ID reference to Subcategory (alphanumeric) - REQUIRED
+  companyId: string // String ID reference to Company (alphanumeric) - REQUIRED
   gender?: 'male' | 'female' | 'unisex' // Gender filter (optional)
   quantity: number // Number of items allowed per cycle
   renewalFrequency: number // Renewal frequency value
@@ -38,10 +38,10 @@ const DesignationSubcategoryEligibilitySchema = new Schema<IDesignationSubcatego
       unique: true,
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Designation Subcategory Eligibility ID must be a 6-digit numeric string (e.g., "700001")'
+        message: 'Designation Subcategory Eligibility ID must be alphanumeric (1-50 characters)'
       }
     },
     designationId: {
@@ -54,9 +54,10 @@ const DesignationSubcategoryEligibilitySchema = new Schema<IDesignationSubcatego
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Subcategory ID must be a 6-digit numeric string (e.g., "600001")'
+        message: 'Subcategory ID must be alphanumeric (1-50 characters)'
       }
     },
     companyId: {
@@ -64,9 +65,10 @@ const DesignationSubcategoryEligibilitySchema = new Schema<IDesignationSubcatego
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     gender: {

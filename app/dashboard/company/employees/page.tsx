@@ -126,26 +126,26 @@ export default function EmployeesPage() {
             setAvailableShoeSizes(shoeSizes || [])
             
             // Build set of Location Admin employee IDs for quick lookup
-            // CRITICAL: location.adminId stores the employee's MongoDB _id (ObjectId)
-            // We need to match employee._id (ObjectId) with location.adminId._id (ObjectId)
+            // CRITICAL FIX: location.adminId stores STRING ID (6-digit numeric), not ObjectId
+            // Use employee.id or employee.employeeId (string IDs), not employee._id
             const adminIds = new Set<string>()
-            const adminEmployeeIds = new Set<string>() // Also track employeeId (numeric string) for fallback
-            const uniqueAdminObjectIds = new Set<string>() // Track unique employees by ObjectId only (for count)
+            const adminEmployeeIds = new Set<string>() // Track employeeId (numeric string)
+            const uniqueAdminIds = new Set<string>() // Track unique employees by string ID
             
             if (companyLocations && Array.isArray(companyLocations)) {
               companyLocations.forEach((loc: any) => {
                 if (loc.adminId) {
-                  // Handle populated adminId object
+                  // Handle populated adminId object (now returns string IDs)
                   if (typeof loc.adminId === 'object') {
-                    // Populated adminId: { _id: ObjectId, id: ..., employeeId: '300032', ... }
-                    // PRIMARY: Use _id (MongoDB ObjectId) - this is what's stored in location.adminId
-                    const adminObjectId = loc.adminId._id?.toString()
-                    if (adminObjectId) {
-                      adminIds.add(adminObjectId)
-                      uniqueAdminObjectIds.add(adminObjectId) // Track unique employees for count
+                    // Populated adminId: { id: '300032', employeeId: '300032', firstName: ..., ... }
+                    // PRIMARY: Use id or employeeId (6-digit numeric string)
+                    const adminStringId = loc.adminId.id || loc.adminId.employeeId
+                    if (adminStringId && /^[A-Za-z0-9_-]{1,50}$/.test(String(adminStringId))) {
+                      adminIds.add(String(adminStringId))
+                      uniqueAdminIds.add(String(adminStringId))
                     }
                     
-                    // SECONDARY: Also track employeeId (numeric string like '300032') as fallback for matching
+                    // Also track employeeId for matching
                     const adminEmployeeId = loc.adminId.employeeId?.toString()
                     if (adminEmployeeId) {
                       adminEmployeeIds.add(adminEmployeeId)
@@ -154,22 +154,19 @@ export default function EmployeesPage() {
                     console.log('[EmployeesPage] Found Location Admin from location:', {
                       location: loc.name,
                       locationId: loc.id,
-                      adminObjectId: adminObjectId,
+                      adminStringId: adminStringId,
                       adminEmployeeId: adminEmployeeId,
                       adminIdStructure: {
-                        _id: loc.adminId._id?.toString(),
                         id: loc.adminId.id,
                         employeeId: loc.adminId.employeeId
                       }
                     })
                   } else if (typeof loc.adminId === 'string') {
-                    // String ObjectId (24 hex chars) or employeeId (numeric string)
-                    if (loc.adminId.length === 24 && /^[0-9a-fA-F]{24}$/.test(loc.adminId)) {
-                      // It's an ObjectId string
+                    // String ID (6-digit numeric) - this is what's stored in location.adminId
+                    if (/^[A-Za-z0-9_-]{1,50}$/.test(loc.adminId)) {
+                      // It's a 6-digit numeric string ID
                       adminIds.add(loc.adminId)
-                      uniqueAdminObjectIds.add(loc.adminId) // Track unique employees for count
-                    } else {
-                      // It's an employeeId (numeric string)
+                      uniqueAdminIds.add(loc.adminId)
                       adminEmployeeIds.add(loc.adminId)
                     }
                   }
@@ -177,11 +174,11 @@ export default function EmployeesPage() {
               })
             }
             
-            console.log('[EmployeesPage] Location Admins by ObjectId (_id):', adminIds.size, Array.from(adminIds))
+            console.log('[EmployeesPage] Location Admins by string ID:', adminIds.size, Array.from(adminIds))
             console.log('[EmployeesPage] Location Admins by employeeId (numeric):', adminEmployeeIds.size, Array.from(adminEmployeeIds))
-            console.log('[EmployeesPage] Unique Location Admin employees (for count):', uniqueAdminObjectIds.size, Array.from(uniqueAdminObjectIds))
+            console.log('[EmployeesPage] Unique Location Admin employees (for count):', uniqueAdminIds.size, Array.from(uniqueAdminIds))
             
-            // Merge employeeIds into the main set for comprehensive matching (but don't count them)
+            // Merge employeeIds into the main set for comprehensive matching
             if (adminEmployeeIds.size > 0) {
               adminEmployeeIds.forEach(id => adminIds.add(id))
             }
@@ -191,7 +188,7 @@ export default function EmployeesPage() {
             
             // Store unique admin count separately for display
             // This represents the actual number of unique employees who are Location Admins
-            const uniqueAdminCount = uniqueAdminObjectIds.size
+            const uniqueAdminCount = uniqueAdminIds.size
             console.log('[EmployeesPage] Unique Location Admin count:', uniqueAdminCount)
             setUniqueLocationAdminCount(uniqueAdminCount)
           } else {
@@ -236,31 +233,20 @@ export default function EmployeesPage() {
   const isSiteAdmin = (employee: any): boolean => {
     if (!employee || locationAdmins.size === 0) return false
     
-    // CRITICAL: location.adminId stores employee._id (MongoDB ObjectId)
-    // So we need to match employee._id.toString() with the values in locationAdmins Set
-    
-    // Primary: MongoDB _id (ObjectId) - this is what's stored in location.adminId
+    // CRITICAL FIX: location.adminId stores STRING ID (6-digit numeric), not ObjectId
+    // Use employee.id or employee.employeeId (string IDs), not employee._id
     let isAdmin = false
     
-    if (employee._id) {
-      const employeeObjectId = employee._id.toString()
-      if (locationAdmins.has(employeeObjectId)) {
+    // Primary: Check employee.id (6-digit numeric string)
+    if (employee.id && /^[A-Za-z0-9_-]{1,50}$/.test(String(employee.id))) {
+      if (locationAdmins.has(String(employee.id))) {
         isAdmin = true
       }
     }
     
-    // Fallback: Also check employeeId (numeric string like '300032') in case it was added to the set
-    if (!isAdmin && employee.employeeId) {
-      const employeeIdStr = employee.employeeId.toString()
-      if (locationAdmins.has(employeeIdStr)) {
-        isAdmin = true
-      }
-    }
-    
-    // Fallback: Check id field if it exists and is different
-    if (!isAdmin && employee.id && employee.id.toString() !== employee._id?.toString()) {
-      const idStr = employee.id.toString()
-      if (locationAdmins.has(idStr)) {
+    // Fallback: Check employeeId (numeric string like '300032')
+    if (!isAdmin && employee.employeeId && /^[A-Za-z0-9_-]{1,50}$/.test(String(employee.employeeId))) {
+      if (locationAdmins.has(String(employee.employeeId))) {
         isAdmin = true
       }
     }
@@ -269,7 +255,7 @@ export default function EmployeesPage() {
     if (isAdmin && typeof window !== 'undefined') {
       console.log('[EmployeesPage] ✓ Location Admin MATCHED:', {
         employeeId: employee.employeeId,
-        _id: employee._id?.toString(),
+        id: employee.id,
         name: `${employee.firstName || ''} ${employee.lastName || ''}`,
         locationAdmins: Array.from(locationAdmins)
       })
@@ -501,7 +487,7 @@ export default function EmployeesPage() {
         }
       } else if (typeof employee.locationId === 'string') {
         // Check if it's a location ID string (6 digits) or ObjectId string (24 hex chars)
-        if (/^\d{6}$/.test(employee.locationId)) {
+        if (/^[A-Za-z0-9_-]{1,50}$/.test(employee.locationId)) {
           // It's a location ID string (like "400006")
           locationIdValue = employee.locationId
         } else if (/^[0-9a-fA-F]{24}$/.test(employee.locationId)) {

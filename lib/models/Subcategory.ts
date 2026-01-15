@@ -13,10 +13,10 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface ISubcategory extends Document {
-  id: string // Unique 6-digit ID (e.g., "600001")
+  id: string // Unique alphanumeric ID (e.g., "SUBCAT-000001")
   name: string // Subcategory name (e.g., "Managers Full Shirt", "Managers Half Shirt")
-  parentCategoryId: string // String ID reference to Category (6-digit numeric string) - REQUIRED
-  companyId: string // String ID reference to Company (6-digit numeric string) - REQUIRED
+  parentCategoryId: string // String ID reference to Category (alphanumeric) - REQUIRED
+  companyId: string // String ID reference to Company (alphanumeric) - REQUIRED
   status: 'active' | 'inactive'
   createdAt?: Date
   updatedAt?: Date
@@ -30,10 +30,10 @@ const SubcategorySchema = new Schema<ISubcategory>(
       unique: true,
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Subcategory ID must be a 6-digit numeric string (e.g., "600001")'
+        message: 'Subcategory ID must be alphanumeric (1-50 characters)'
       }
     },
     name: {
@@ -46,9 +46,10 @@ const SubcategorySchema = new Schema<ISubcategory>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Parent Category ID must be a 6-digit numeric string (e.g., "500001")'
+        message: 'Parent Category ID must be alphanumeric (1-50 characters)'
       }
     },
     companyId: {
@@ -56,9 +57,10 @@ const SubcategorySchema = new Schema<ISubcategory>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     status: {

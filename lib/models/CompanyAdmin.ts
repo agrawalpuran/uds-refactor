@@ -1,8 +1,8 @@
 import mongoose, { Schema, Document } from 'mongoose'
 
 export interface ICompanyAdmin extends Document {
-  companyId: string // String ID reference to Company (6-digit numeric string)
-  employeeId: string // String ID reference to Employee (6-digit numeric string)
+  companyId: string // String ID reference to Company (alphanumeric)
+  employeeId: string // String ID reference to Employee (alphanumeric)
   canApproveOrders: boolean
   createdAt?: Date
   updatedAt?: Date
@@ -15,9 +15,10 @@ const CompanyAdminSchema = new Schema<ICompanyAdmin>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     employeeId: {
@@ -25,9 +26,10 @@ const CompanyAdminSchema = new Schema<ICompanyAdmin>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Employee ID must be a 6-digit numeric string (e.g., "300001")'
+        message: 'Employee ID must be alphanumeric (1-50 characters)'
       }
     },
     canApproveOrders: {

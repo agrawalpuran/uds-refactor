@@ -15,15 +15,15 @@ import mongoose, { Schema, Document } from 'mongoose'
  */
 
 export interface IReturnRequest extends Document {
-  returnRequestId: string // Unique 6-digit ID (e.g., "600001")
+  returnRequestId: string // Unique alphanumeric ID (e.g., "RET-000001")
   originalOrderId: string // Reference to original order ID
   originalOrderItemIndex: number // Index of item in original order.items array
   productId: string // SKU/productId (must match original)
-  uniformId: string // String ID reference to Uniform (6-digit numeric string)
+  uniformId: string // String ID reference to Uniform (alphanumeric)
   uniformName: string // Product name
-  employeeId: string // String ID reference to Employee (6-digit numeric string)
+  employeeId: string // String ID reference to Employee (alphanumeric)
   employeeIdNum: string // Employee ID for correlation
-  companyId: string // String ID reference to Company (6-digit numeric string)
+  companyId: string // String ID reference to Company (alphanumeric)
   requestedQty: number // Quantity to replace (≤ delivered quantity)
   originalSize: string // Size from original order
   requestedSize: string // New size (can be same or different)
@@ -47,10 +47,10 @@ const ReturnRequestSchema = new Schema<IReturnRequest>(
       unique: true,
       validate: {
         validator: function(v: string) {
-          // Must be exactly 6 digits, starting from 600001
-          return /^\d{6}$/.test(v) && parseInt(v) >= 600001 && parseInt(v) < 700000
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Return Request ID must be a 6-digit numeric string between 600001-699999 (e.g., "600001")'
+        message: 'Return Request ID must be alphanumeric (1-50 characters)'
       }
     },
     originalOrderId: {
@@ -73,9 +73,10 @@ const ReturnRequestSchema = new Schema<IReturnRequest>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Uniform ID must be a 6-digit numeric string (e.g., "200001")'
+        message: 'Uniform ID must be alphanumeric (1-50 characters)'
       }
     },
     uniformName: {
@@ -87,9 +88,10 @@ const ReturnRequestSchema = new Schema<IReturnRequest>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Employee ID must be a 6-digit numeric string (e.g., "300001")'
+        message: 'Employee ID must be alphanumeric (1-50 characters)'
       }
     },
     employeeIdNum: {
@@ -100,12 +102,6 @@ const ReturnRequestSchema = new Schema<IReturnRequest>(
     companyId: {
       type: String,
       required: true,
-      validate: {
-        validator: function(v: string) {
-          return /^\d{6}$/.test(v)
-        },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
-      }
     },
     requestedQty: {
       type: Number,

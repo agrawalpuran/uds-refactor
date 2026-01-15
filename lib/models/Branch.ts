@@ -14,8 +14,8 @@ export interface IBranch extends Document {
   country: string // Country name (DEFAULT: 'India')
   phone?: string
   email?: string
-  companyId: string // String ID reference to Company (6-digit numeric string)
-  adminId?: string // String ID reference to Employee (6-digit numeric string)
+  companyId: string // String ID reference to Company (alphanumeric)
+  adminId?: string // String ID reference to Employee (alphanumeric)
   status: 'active' | 'inactive'
   createdAt?: Date
   updatedAt?: Date
@@ -92,9 +92,10 @@ const BranchSchema = new Schema<IBranch>(
       required: true,
       validate: {
         validator: function(v: string) {
-          return /^\d{6}$/.test(v)
+          // Must be alphanumeric (1-50 characters)
+          return /^[A-Za-z0-9_-]{1,50}$/.test(v)
         },
-        message: 'Company ID must be a 6-digit numeric string (e.g., "100001")'
+        message: 'Company ID must be alphanumeric (1-50 characters)'
       }
     },
     adminId: {

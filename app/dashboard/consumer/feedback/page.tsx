@@ -63,7 +63,7 @@ export default function ConsumerFeedbackPage() {
               locationCompanyIdStr = location.companyId.id || null
             } else if (typeof location.companyId === 'string') {
               // Check if it's a company ID string (6-digit) or ObjectId string (24 hex)
-              if (/^\d{6}$/.test(location.companyId)) {
+              if (/^[A-Za-z0-9_-]{1,50}$/.test(location.companyId)) {
                 locationCompanyIdStr = location.companyId
               } else {
                 // It's an ObjectId - need to find company by _id

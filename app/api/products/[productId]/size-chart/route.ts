@@ -17,11 +17,11 @@ export async function GET(
         { status: 400 }
       )
 
-    // Validate product ID format (6-digit numeric)
+    // Validate product ID format (alphanumeric)
     }
-    if (!/^\d{6}$/.test(productId)) {
+    if (!/^[A-Za-z0-9_-]{1,50}$/.test(productId)) {
       return NextResponse.json(
-        { error: 'Invalid product ID format. Must be 6-digit numeric string.' },
+        { error: 'Invalid product ID format. Must be alphanumeric (1-50 characters).' },
         { status: 400 }
       )
 
